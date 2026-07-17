@@ -54,6 +54,10 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			WavPlayer.tickVolumeSync();
 			handleVolumeKeys(client);
 
+			if (ModKeybindings.openMusicBrowser.consumeClick() && client.level != null && client.gui.screen() == null) {
+				client.gui.setScreen(new MusicBrowserScreen(null));
+			}
+
 			if (--folderRefreshCountdown <= 0) {
 				CustomTrackManager.get().refresh();
 				folderRefreshCountdown = 100;

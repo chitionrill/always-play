@@ -42,5 +42,8 @@
   "music-delay-reducer.config.open_folder": "Open Folder",
   "key.music-delay-reducer.skip_forward": "Skip Forward",
   "key.music-delay-reducer.skip_backward": "Skip Backward",
-  "key.category.music-delay-reducer.general": "Always Play"
+  "key.category.music-delay-reducer.general": "Always Play",
+  "music-delay-reducer.browser.title": "Music Browser",
+  "music-delay-reducer.browser.close": "Close",
+  "key.music-delay-reducer.open_browser": "Open Music Browser"
 }

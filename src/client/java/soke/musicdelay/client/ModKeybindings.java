@@ -11,6 +11,7 @@ public class ModKeybindings {
     public static KeyMapping skipBackward;
     public static KeyMapping volumeUp;
     public static KeyMapping volumeDown;
+    public static KeyMapping openMusicBrowser;
 
     private static final KeyMapping.Category CATEGORY =
             KeyMapping.Category.register(Identifier.fromNamespaceAndPath("music-delay-reducer", "general"));
@@ -41,6 +42,13 @@ public class ModKeybindings {
                 "key.music-delay-reducer.volume_down",
                 InputConstants.Type.KEYSYM,
                 InputConstants.KEY_DOWN,
+                CATEGORY
+        ));
+
+        openMusicBrowser = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.music-delay-reducer.open_browser",
+                InputConstants.Type.KEYSYM,
+                InputConstants.KEY_M,
                 CATEGORY
         ));
     }

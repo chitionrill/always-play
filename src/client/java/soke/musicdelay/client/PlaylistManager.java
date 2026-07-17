@@ -79,7 +79,7 @@ public class PlaylistManager {
         activePlaylistId = id;
     }
 
-    public static String getActivePlaylistId() {гот
+    public static String getActivePlaylistId() {
         return activePlaylistId;
     }
 

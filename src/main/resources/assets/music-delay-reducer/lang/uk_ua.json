@@ -42,5 +42,8 @@
   "music-delay-reducer.config.open_folder": "Відкрити папку",
   "key.music-delay-reducer.skip_forward": "Наступний трек",
   "key.music-delay-reducer.skip_backward": "Попередній трек",
-  "key.category.music-delay-reducer.general": "Always Play"
+  "key.category.music-delay-reducer.general": "Always Play",
+  "music-delay-reducer.browser.title": "Браузер музики",
+  "music-delay-reducer.browser.close": "Закрити",
+  "key.music-delay-reducer.open_browser": "Відкрити браузер музики"
 }
