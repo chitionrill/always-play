@@ -1,0 +1,44 @@
+{
+	"schemaVersion": 1,
+	"id": "music-delay-reducer",
+	"version": "${version}",
+	"name": "Always Play",
+	"description": "Keeps the music always playing. Reduces the delay between tracks to seconds instead of minutes, and lets you add your own custom music alongside or instead of vanilla tracks.",
+	"authors": [
+		"SokeDev"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC-BY-NC-SA-4.0",
+	"icon": "assets/music-delay-reducer/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"soke.musicdelay.MusicDelayReducer"
+		],
+		"client": [
+			"soke.musicdelay.client.MusicDelayReducerClient"
+		],
+		"modmenu": [
+			"soke.musicdelay.client.ModMenuIntegration"
+		]
+	},
+	"mixins": [
+		"music-delay-reducer.mixins.json",
+		{
+			"config": "music-delay-reducer.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
+	}
+}
