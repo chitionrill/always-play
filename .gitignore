@@ -16,7 +16,7 @@ classes/
 *.ipr
 *.iws
 
-# vscode
+# vscodegit pull
 
 .settings/
 .vscode/
