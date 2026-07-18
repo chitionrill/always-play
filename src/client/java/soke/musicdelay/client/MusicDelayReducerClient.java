@@ -237,6 +237,34 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		somethingPlaying = true;
 	}
 
+	public static void playFromBrowser(BrowsableTrack track) {
+		Minecraft client = Minecraft.getInstance();
+		MusicManager manager = client.getMusicManager();
+		IMusicManagerMixin mixin = (IMusicManagerMixin) manager;
+		MusicTracker tracker = MusicTracker.get();
+
+		tracker.clearPending();
+		somethingPlaying = true;
+		autoplayCountdown = 0;
+		plannedAutoplayPath = null;
+		plannedAutoplayIsVanilla = false;
+
+		mixin.mdr$stopAndBlock();
+		UnifiedTrack unified = track.toUnifiedTrack();
+
+		if (unified.type == UnifiedTrack.Type.CUSTOM) {
+			ModConfig config = ModConfig.get();
+			WavPlayer.crossfadeTo(unified.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
+			lastCustomPath = unified.customPath;
+			tracker.onTrackStarted(unified);
+			showCustomTrackToast(unified.customPath);
+		} else {
+			WavPlayer.stop();
+			mixin.mdr$playFixed(unified.vanillaSound);
+			tracker.onTrackStarted(unified);
+		}
+	}
+
 	private static void planNextAutoplay(Minecraft client, String mode) {
 		List<Path> customTracks = CustomTrackManager.get().getTracks();
 		boolean hasCustom = !customTracks.isEmpty();

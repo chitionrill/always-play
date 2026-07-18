@@ -303,7 +303,7 @@ public class ConfigScreen extends Screen {
         graphics.enableScissor(0, scissorTop, this.width, scissorBottom);
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         graphics.disableScissor();
-        graphics.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFF);
+        graphics.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFFFF);
     }
 
     private static class SecondsSlider extends AbstractSliderButton {

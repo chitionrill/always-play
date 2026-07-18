@@ -40,14 +40,13 @@ public class MusicBrowserScreen extends Screen {
 
     @Override
     public void onClose() {
-        PreviewPlayer.stop();
         this.minecraft.gui.setScreen(parent);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
-        graphics.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFF);
+        graphics.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFFFF);
     }
 
     private void onAddClicked(BrowsableTrack track) {
@@ -55,7 +54,7 @@ public class MusicBrowserScreen extends Screen {
     }
 
     private void onPlayClicked(BrowsableTrack track) {
-        PreviewPlayer.play(track);
+        MusicDelayReducerClient.playFromBrowser(track);
     }
 
     private class TrackListWidget extends ObjectSelectionList<TrackListWidget.TrackEntry> {
@@ -100,7 +99,7 @@ public class MusicBrowserScreen extends Screen {
             @Override
             public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float partialTick) {
                 if (track.kind == BrowsableTrack.Kind.HEADER) {
-                    graphics.centeredText(font, track.displayName, getContentXMiddle(), getContentY() + 5, 0xFFFF55);
+                    graphics.centeredText(font, track.displayName, getContentXMiddle(), getContentY() + 5, 0xFFFFFF55);
                     return;
                 }
 
@@ -116,13 +115,13 @@ public class MusicBrowserScreen extends Screen {
                 Component displayText = font.width(track.displayName) > maxTextWidth
                         ? Component.literal(font.plainSubstrByWidth(track.displayName.getString(), maxTextWidth) + "...")
                         : track.displayName;
-                graphics.text(font, displayText, textX, getContentY() + 6, 0xDDDDDD);
+                graphics.text(font, displayText, textX, getContentY() + 6, 0xFFDDDDDD);
 
                 boolean playHovered = isOverButton(mouseX, mouseY, playButtonX(), PLAY_BUTTON_SIZE);
-                graphics.text(font, "\u25B6", playButtonX() + 3, getContentY() + 6, playHovered ? 0xFFFFFF : 0x55FF55);
+                graphics.text(font, "\u25B6", playButtonX() + 3, getContentY() + 6, playHovered ? 0xFFFFFFFF : 0xFF55FF55);
 
                 boolean plusHovered = isOverButton(mouseX, mouseY, plusButtonX(), PLUS_BUTTON_SIZE);
-                graphics.text(font, "+", plusButtonX() + 5, getContentY() + 6, plusHovered ? 0xFFFFFF : 0x55AAFF);
+                graphics.text(font, "+", plusButtonX() + 5, getContentY() + 6, plusHovered ? 0xFFFFFFFF : 0xFF55AAFF);
             }
 
             private boolean isOverButton(int mouseX, int mouseY, int buttonX, int size) {
