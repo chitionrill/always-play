@@ -45,5 +45,16 @@
   "key.category.music-delay-reducer.general": "Always Play",
   "music-delay-reducer.browser.title": "Браузер музики",
   "music-delay-reducer.browser.close": "Закрити",
-  "key.music-delay-reducer.open_browser": "Відкрити браузер музики"
+  "key.music-delay-reducer.open_browser": "Відкрити браузер музики",
+  "music-delay-reducer.playlist.name_title": "Назва плейлиста",
+  "music-delay-reducer.playlist.name_field": "Назва плейлиста",
+  "music-delay-reducer.playlist.save": "Зберегти",
+  "music-delay-reducer.playlist.choose_title": "Додати в плейлист",
+  "music-delay-reducer.playlist.create_new": "Створити новий плейлист",
+  "music-delay-reducer.playlist.done": "Готово",
+  "music-delay-reducer.playlist.building_count": "Додавання треків... обрано: %s",
+  "music-delay-reducer.playlist.manager_title": "Мої плейлисти",
+  "music-delay-reducer.playlist.manager_button": "Мої плейлисти",
+  "music-delay-reducer.playlist.stop_active": "Зупинити плейлист (звичайний режим)",
+  "music-delay-reducer.playlist.view": "Перегляд"
 }

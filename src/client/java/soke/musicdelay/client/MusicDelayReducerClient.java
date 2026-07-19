@@ -43,6 +43,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		ModKeybindings.register();
 		CustomTrackManager.get().refresh();
+		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
 			if (ModConfig.get().worldRestartEnabled) {

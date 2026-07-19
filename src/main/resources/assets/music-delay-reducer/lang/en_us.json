@@ -45,5 +45,16 @@
   "key.category.music-delay-reducer.general": "Always Play",
   "music-delay-reducer.browser.title": "Music Browser",
   "music-delay-reducer.browser.close": "Close",
-  "key.music-delay-reducer.open_browser": "Open Music Browser"
+  "key.music-delay-reducer.open_browser": "Open Music Browser",
+  "music-delay-reducer.playlist.name_title": "Name Your Playlist",
+  "music-delay-reducer.playlist.name_field": "Playlist name",
+  "music-delay-reducer.playlist.save": "Save",
+  "music-delay-reducer.playlist.choose_title": "Add To Playlist",
+  "music-delay-reducer.playlist.create_new": "Create New Playlist",
+  "music-delay-reducer.playlist.done": "Done",
+  "music-delay-reducer.playlist.building_count": "Adding tracks... %s selected",
+  "music-delay-reducer.playlist.manager_title": "My Playlists",
+  "music-delay-reducer.playlist.manager_button": "My Playlists",
+  "music-delay-reducer.playlist.stop_active": "Stop Playlist (Use Normal Mode)",
+  "music-delay-reducer.playlist.view": "View"
 }

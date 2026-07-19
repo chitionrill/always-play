@@ -25,6 +25,7 @@ public class ModConfig {
     public int startupDelaySeconds = 2;
     public boolean worldRestartEnabled = true;
     public String trackOrderMode = "RANDOM";
+    public String activePlaylistId = null;
 
     private static ModConfig instance;
 

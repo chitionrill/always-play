@@ -34,8 +34,23 @@ public class MusicBrowserScreen extends Screen {
         trackList.setEntries(allTracks);
         this.addRenderableWidget(trackList);
 
-        this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.browser.close"), b -> this.onClose())
-                .bounds(this.width / 2 - 100, this.height - 30, 200, 20).build());
+        if (PlaylistBuilder.isBuilding()) {
+            this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.done"), b ->
+                            this.minecraft.gui.setScreen(new PlaylistNameScreen(this)))
+                    .bounds(this.width / 2 - 105, this.height - 30, 100, 20).build());
+
+            this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.browser.close"), b -> {
+                PlaylistBuilder.cancelBuilding();
+                this.onClose();
+            }).bounds(this.width / 2 + 5, this.height - 30, 100, 20).build());
+        } else {
+            this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.manager_button"), b ->
+                            this.minecraft.gui.setScreen(new PlaylistManagerScreen(this)))
+                    .bounds(this.width / 2 - 205, this.height - 30, 200, 20).build());
+
+            this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.browser.close"), b -> this.onClose())
+                    .bounds(this.width / 2 + 5, this.height - 30, 200, 20).build());
+        }
     }
 
     @Override
@@ -47,10 +62,18 @@ public class MusicBrowserScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         graphics.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFFFF);
+        if (PlaylistBuilder.isBuilding()) {
+            graphics.centeredText(this.font, Component.translatable("music-delay-reducer.playlist.building_count", PlaylistBuilder.getEntryCount()), this.width / 2, 26, 0xFF55FF55);
+        }
     }
 
     private void onAddClicked(BrowsableTrack track) {
-        // Логику добавления в плейлист подключим следующим шагом
+        if (PlaylistBuilder.isBuilding()) {
+            PlaylistBuilder.addEntry(track);
+            this.rebuildWidgets();
+        } else {
+            this.minecraft.gui.setScreen(new PlaylistChooserScreen(this, track));
+        }
     }
 
     private void onPlayClicked(BrowsableTrack track) {
