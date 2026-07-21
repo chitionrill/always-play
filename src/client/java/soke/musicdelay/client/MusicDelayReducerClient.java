@@ -46,6 +46,9 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+			// Обновляем список ванильных треков (в т.ч. пластинок) при каждом заходе в мир —
+			// реестр пластинок доступен только когда мир загружен, без этого он остаётся пустым/устаревшим
+			VanillaTrackRegistry.refresh();
 			if (ModConfig.get().worldRestartEnabled) {
 				restartForWorldJoin();
 			}
@@ -70,6 +73,8 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			ModConfig config = ModConfig.get();
 			String mode = config.playbackMode;
 			int skipDelayTicks = config.skipDelaySeconds * 20;
+			Playlist activePlaylist = PlaylistManager.getActivePlaylist();
+			boolean playlistMode = activePlaylist != null && !activePlaylist.entries.isEmpty();
 
 			if (!startupHandled) {
 				if (!startupInitialized) {
@@ -90,7 +95,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				startupHandled = true;
 				startupBlocking = false;
 
-				if ("VANILLA".equals(mode)) {
+				if (!playlistMode && "VANILLA".equals(mode)) {
 					mixin.mdr$unblock(1);
 				}
 				vanillaStartupFadePending = pendingStartupFade;
@@ -112,9 +117,10 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				}
 			}
 
+			// --- Переключение вперёд/назад работает одинаково и в обычном режиме, и в плейлисте ---
 			if (ModKeybindings.skipForward.consumeClick()) {
 				tracker.clearPending();
-				if (!"CUSTOM".equals(mode)) mixin.mdr$stopAndBlock();
+				if (!"CUSTOM".equals(mode) || playlistMode) mixin.mdr$stopAndBlock();
 
 				if (tracker.canGoForward()) {
 					UnifiedTrack next = tracker.getNextTrack();
@@ -127,6 +133,10 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 						}
 						tracker.setPending(next, skipDelayTicks);
 					}
+				} else if (playlistMode) {
+					WavPlayer.stop();
+					somethingPlaying = false;
+					autoplayCountdown = skipDelayTicks;
 				} else if ("VANILLA".equals(mode)) {
 					mixin.mdr$unblock(skipDelayTicks);
 				} else {
@@ -139,7 +149,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 			if (ModKeybindings.skipBackward.consumeClick() && tracker.canGoBack()) {
 				tracker.clearPending();
-				if (!"CUSTOM".equals(mode)) mixin.mdr$stopAndBlock();
+				if (!"CUSTOM".equals(mode) || playlistMode) mixin.mdr$stopAndBlock();
 				UnifiedTrack previous = tracker.getPreviousTrack();
 				if (skipDelayTicks <= 0) {
 					playHistoryTrack(mixin, previous);
@@ -155,6 +165,28 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			if (tracker.hasPending() && tracker.tickPending()) {
 				UnifiedTrack pending = tracker.consumePending();
 				playHistoryTrack(mixin, pending);
+			}
+
+			if (playlistMode) {
+				if (!tracker.hasPending()) {
+					boolean stillPlaying = WavPlayer.isBusy() || mixin.mdr$isVanillaActive();
+
+					if (somethingPlaying && !stillPlaying) {
+						somethingPlaying = false;
+						int min = config.minDelaySeconds * 20;
+						int max = Math.max(min + 1, config.maxDelaySeconds * 20);
+						autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
+					}
+
+					if (!somethingPlaying) {
+						if (autoplayCountdown > 0) {
+							autoplayCountdown--;
+						} else {
+							tryPlayNextFromPlaylist(mixin, activePlaylist, config);
+						}
+					}
+				}
+				return;
 			}
 
 			if (!"VANILLA".equals(mode) && !tracker.hasPending()) {
@@ -183,6 +215,55 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				}
 			}
 		});
+	}
+
+	private static void tryPlayNextFromPlaylist(IMusicManagerMixin mixin, Playlist playlist, ModConfig config) {
+		int attempts = 0;
+		int maxAttempts = playlist.entries.size() + 1;
+		while (attempts < maxAttempts) {
+			Playlist.PlaylistEntry entry = PlaylistOrderManager.pickNext(playlist, config.trackOrderMode);
+			if (entry == null) return;
+			UnifiedTrack unified = entry.toUnifiedTrack();
+			if (unified != null) {
+				playNewTrack(mixin, unified);
+				return;
+			}
+			attempts++;
+		}
+	}
+
+	// Играет НОВЫЙ (ещё не бывший в истории) трек и записывает его в историю —
+	// используется и обычным автовоспроизведением, и плейлистом
+	private static void playNewTrack(IMusicManagerMixin mixin, UnifiedTrack track) {
+		mixin.mdr$stopAndBlock();
+		if (track.type == UnifiedTrack.Type.CUSTOM) {
+			ModConfig config = ModConfig.get();
+			WavPlayer.crossfadeTo(track.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
+			lastCustomPath = track.customPath;
+			showCustomTrackToast(track.customPath);
+		} else {
+			WavPlayer.stop();
+			mixin.mdr$playFixed(track.vanillaSound);
+		}
+		MusicTracker.get().onTrackStarted(track);
+		somethingPlaying = true;
+	}
+
+	// Вызывается при клике "▶" на конкретном треке внутри просмотра плейлиста
+	public static void playPlaylistEntryDirect(Playlist playlist, Playlist.PlaylistEntry entry) {
+		UnifiedTrack unified = entry.toUnifiedTrack();
+		if (unified == null) return;
+
+		PlaylistManager.setActivePlaylist(playlist.id);
+		ModConfig.get().activePlaylistId = playlist.id;
+		ModConfig.get().save();
+
+		MusicTracker.get().clearPending();
+		autoplayCountdown = 0;
+
+		Minecraft client = Minecraft.getInstance();
+		IMusicManagerMixin mixin = (IMusicManagerMixin) client.getMusicManager();
+		playNewTrack(mixin, unified);
 	}
 
 	private static void handleVolumeKeys(Minecraft client) {
@@ -219,10 +300,16 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		client.options.save();
 	}
 
+	private static void showCustomTrackToast(Path path) {
+		if (!Minecraft.getInstance().options.musicToast().get().renderToast()) return;
+		String name = path.getFileName().toString();
+		int dot = name.lastIndexOf('.');
+		if (dot > 0) name = name.substring(0, dot);
+		CustomTrackToast.showTrack(name);
+	}
+
 	private static void playHistoryTrack(IMusicManagerMixin mixin, UnifiedTrack track) {
-		if (track.type != UnifiedTrack.Type.VANILLA) {
-			// не трогаем ванильную звуковую систему игры, если реально играть будем не её
-		} else {
+		if (track.type == UnifiedTrack.Type.VANILLA) {
 			mixin.mdr$stopAndBlock();
 		}
 		boolean forceFade = consumeStartupFadeFlag();
@@ -243,6 +330,10 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		MusicManager manager = client.getMusicManager();
 		IMusicManagerMixin mixin = (IMusicManagerMixin) manager;
 		MusicTracker tracker = MusicTracker.get();
+
+		PlaylistManager.setActivePlaylist(null);
+		ModConfig.get().activePlaylistId = null;
+		ModConfig.get().save();
 
 		tracker.clearPending();
 		somethingPlaying = true;
@@ -321,20 +412,11 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		return false;
 	}
 
-	private static void showCustomTrackToast(Path path) {
-		if (!Minecraft.getInstance().options.musicToast().get().renderToast()) return;
-		String name = path.getFileName().toString();
-		int dot = name.lastIndexOf('.');
-		if (dot > 0) name = name.substring(0, dot);
-		CustomTrackToast.showTrack(name);
-	}
-
 	private static Path pickCustomTrack(List<Path> tracks) {
 		return TrackOrderManager.pickNext(tracks, lastCustomPath, ModConfig.get().trackOrderMode);
 	}
 
 	public static void resetPlaybackState() {
-		TrackOrderManager.reset();
 		WavPlayer.stop();
 		MusicManager manager = Minecraft.getInstance().getMusicManager();
 		IMusicManagerMixin mixin = (IMusicManagerMixin) manager;
@@ -344,8 +426,11 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		autoplayCountdown = 0;
 		plannedAutoplayPath = null;
 		plannedAutoplayIsVanilla = false;
+		TrackOrderManager.reset();
+		PlaylistOrderManager.reset();
 
-		if ("VANILLA".equals(ModConfig.get().playbackMode)) {
+		Playlist active = PlaylistManager.getActivePlaylist();
+		if (active == null && "VANILLA".equals(ModConfig.get().playbackMode)) {
 			mixin.mdr$unblock(1);
 		}
 	}

@@ -75,4 +75,28 @@ public class VanillaTrackRegistry {
         }
         cachedDiscs = discsResult;
     }
+    // Находит настоящее отображаемое название по идентификатору звука — учитывает и обычную
+// музыку (через перевод игры), и пластинки (через их собственное description)
+    public static Component getDisplayNameForLocation(Identifier soundLocation) {
+        if (cachedDiscs == null) refresh();
+        for (VanillaEntry entry : cachedDiscs) {
+            if (entry.sound().getLocation().equals(soundLocation)) {
+                return entry.displayName();
+            }
+        }
+        return Component.translatable(soundLocation.toShortLanguageKey().replace("/", "."));
+    }
+
+    // Находит объект Sound по его идентификатору — нужно чтобы восстановить ванильный
+// трек из сохранённого плейлиста (там хранится только строка-идентификатор)
+    public static Sound findSoundByLocation(Identifier location) {
+        if (cachedAmbient == null) refresh();
+        for (VanillaEntry entry : cachedAmbient) {
+            if (entry.sound().getLocation().equals(location)) return entry.sound();
+        }
+        for (VanillaEntry entry : cachedDiscs) {
+            if (entry.sound().getLocation().equals(location)) return entry.sound();
+        }
+        return null;
+    }
 }

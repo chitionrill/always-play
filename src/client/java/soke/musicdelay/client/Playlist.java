@@ -38,5 +38,14 @@ public class Playlist {
         public static PlaylistEntry ofVanilla(String soundLocation) {
             return new PlaylistEntry("VANILLA", soundLocation);
         }
+        public UnifiedTrack toUnifiedTrack() {
+            if ("CUSTOM".equals(type)) {
+                return UnifiedTrack.ofCustom(java.nio.file.Path.of(value));
+            } else {
+                net.minecraft.client.resources.sounds.Sound sound =
+                        VanillaTrackRegistry.findSoundByLocation(net.minecraft.resources.Identifier.parse(value));
+                return sound != null ? UnifiedTrack.ofVanilla(sound) : null;
+            }
+        }
     }
 }

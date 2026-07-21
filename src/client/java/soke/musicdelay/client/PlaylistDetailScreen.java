@@ -79,16 +79,20 @@ public class PlaylistDetailScreen extends Screen {
                     if (dot > 0) name = name.substring(0, dot);
                     return Component.literal(name);
                 }
-                return Component.translatable(entry.value.replace("minecraft:", "").replace("/", ".").replace(":", "."));
+                return VanillaTrackRegistry.getDisplayNameForLocation(net.minecraft.resources.Identifier.parse(entry.value));
+            }
+
+            private int removeButtonX() {
+                return getContentRight() - 16;
+            }
+
+            private int playButtonX() {
+                return removeButtonX() - 24;
             }
 
             @Override
             public Component getNarration() {
                 return displayName();
-            }
-
-            private int removeButtonX() {
-                return getContentRight() - 16;
             }
 
             @Override
@@ -98,14 +102,27 @@ public class PlaylistDetailScreen extends Screen {
                 }
                 graphics.text(font, displayName(), getContentX() + 4, getContentY() + 6, 0xFFDDDDDD);
 
-                boolean removeHovered = mouseX >= removeButtonX() && mouseX < removeButtonX() + 16 && mouseY >= getY() && mouseY < getY() + getHeight();
+                boolean playHovered = isOverButton(mouseX, mouseY, playButtonX(), 16);
+                graphics.text(font, "\u25B6", playButtonX() + 3, getContentY() + 6, playHovered ? 0xFFFFFFFF : 0xFF55FF55);
+
+                boolean removeHovered = isOverButton(mouseX, mouseY, removeButtonX(), 16);
                 graphics.text(font, "X", removeButtonX() + 4, getContentY() + 6, removeHovered ? 0xFFFFFFFF : 0xFFFF5555);
+            }
+
+            private boolean isOverButton(int mouseX, int mouseY, int buttonX, int width) {
+                return mouseX >= buttonX && mouseX < buttonX + width && mouseY >= getY() && mouseY < getY() + getHeight();
             }
 
             @Override
             public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
                 int mx = (int) event.x();
-                if (mx >= removeButtonX()) {
+                int my = (int) event.y();
+
+                if (isOverButton(mx, my, playButtonX(), 16)) {
+                    MusicDelayReducerClient.playPlaylistEntryDirect(playlist, entry);
+                    return true;
+                }
+                if (isOverButton(mx, my, removeButtonX(), 16)) {
                     playlist.entries.remove(entry);
                     PlaylistManager.persist();
                     refreshList();
