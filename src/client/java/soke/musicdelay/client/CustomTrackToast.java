@@ -27,19 +27,17 @@ public class CustomTrackToast implements Toast {
     private long blinkStartMillis = 0L;
     private Toast.Visibility wantedVisibility = Toast.Visibility.SHOW;
 
-    private CustomTrackToast(String trackName) {
+    private CustomTrackToast(Component text) {
         this.minecraft = Minecraft.getInstance();
-        this.displayText = Component.literal(trackName);
+        this.displayText = text;
     }
 
-    // Показывает трек, переиспользуя один и тот же тост вместо создания новых при каждом переключении
-    public static void showTrack(String trackName) {
-        Component newText = Component.literal(trackName);
+    public static void showTrack(Component text) {
         if (active == null) {
-            active = new CustomTrackToast(trackName);
+            active = new CustomTrackToast(text);
             Minecraft.getInstance().gui.toastManager().addToast(active);
-        } else if (!active.displayText.equals(newText)) {
-            active.pendingText = newText;
+        } else if (!active.displayText.equals(text)) {
+            active.pendingText = text;
             active.blinking = true;
             active.blinkStartMillis = System.currentTimeMillis();
             active.wantedVisibility = Toast.Visibility.HIDE;

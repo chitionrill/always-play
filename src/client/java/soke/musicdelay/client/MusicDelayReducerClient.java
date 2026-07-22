@@ -244,6 +244,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		} else {
 			WavPlayer.stop();
 			mixin.mdr$playFixed(track.vanillaSound);
+			showVanillaTrackToast(track.vanillaSound);
 		}
 		MusicTracker.get().onTrackStarted(track);
 		somethingPlaying = true;
@@ -305,7 +306,14 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		String name = path.getFileName().toString();
 		int dot = name.lastIndexOf('.');
 		if (dot > 0) name = name.substring(0, dot);
-		CustomTrackToast.showTrack(name);
+		Minecraft.getInstance().gui.toastManager().hideNowPlayingToast();
+		CustomTrackToast.showTrack(net.minecraft.network.chat.Component.literal(name));
+	}
+
+	private static void showVanillaTrackToast(net.minecraft.client.resources.sounds.Sound sound) {
+		if (!Minecraft.getInstance().options.musicToast().get().renderToast()) return;
+		Minecraft.getInstance().gui.toastManager().hideNowPlayingToast();
+		CustomTrackToast.showTrack(VanillaTrackRegistry.getDisplayNameForLocation(sound.getLocation()));
 	}
 
 	private static void playHistoryTrack(IMusicManagerMixin mixin, UnifiedTrack track) {
@@ -321,6 +329,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		} else {
 			WavPlayer.stop();
 			mixin.mdr$playFixed(track.vanillaSound);
+			showVanillaTrackToast(track.vanillaSound);
 		}
 		somethingPlaying = true;
 	}
@@ -354,6 +363,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			WavPlayer.stop();
 			mixin.mdr$playFixed(unified.vanillaSound);
 			tracker.onTrackStarted(unified);
+			showVanillaTrackToast(unified.vanillaSound);
 		}
 	}
 
