@@ -30,6 +30,9 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
     private int nextSongDelay;
 
     @Shadow
+    private boolean toastShown;
+
+    @Shadow
     public abstract void stopPlaying();
 
     @Shadow
@@ -57,6 +60,7 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
     public void mdr$stopAndBlock() {
         stopPlaying();
         this.nextSongDelay = Integer.MAX_VALUE;
+        this.toastShown = false;
     }
 
     @Override
@@ -73,6 +77,10 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
         Minecraft.getInstance().getSoundManager().play(instance);
         this.currentMusic = instance;
         this.nextSongDelay = Integer.MAX_VALUE;
+        // Отмечаем, что тост "Сейчас играет" уже показан — иначе игра сама попытается
+        // показать свой собственный тост (со сломанным названием для пластинок) в другой момент,
+        // например при открытии меню паузы
+        this.toastShown = true;
         tracker.setNavigating(false);
     }
 
@@ -99,5 +107,11 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
     @Unique
     public void mdr$setGain(float gain) {
         Minecraft.getInstance().getSoundManager().updateCategoryVolume(SoundSource.MUSIC, gain);
+    }
+
+    @Override
+    @Unique
+    public Sound mdr$getCurrentSound() {
+        return this.currentMusic != null ? this.currentMusic.getSound() : null;
     }
 }

@@ -10,4 +10,5 @@ public interface IMusicManagerMixin {
     void mdr$unblock(int delayTicks);
     boolean mdr$isVanillaActive();
     void mdr$setGain(float gain);
+    net.minecraft.client.resources.sounds.Sound mdr$getCurrentSound();
 }
