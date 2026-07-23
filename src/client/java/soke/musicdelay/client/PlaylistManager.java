@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import net.fabricmc.loader.api.FabricLoader;
+import soke.musicdelay.ModConfig;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -14,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public class PlaylistManager {
 
@@ -63,20 +65,31 @@ public class PlaylistManager {
         save();
     }
 
+    // Единая точка правды: удаление плейлиста. Проверяем "был ли активным" ДО удаления,
+    // и если да — снимаем активность через тот же метод, что и везде (гарантирует что
+    // in-memory состояние и ModConfig никогда не разъедутся)
     public static void remove(Playlist playlist) {
+        boolean wasActive = playlist.id.equals(activePlaylistId);
         playlists.remove(playlist);
-        if (playlist.id.equals(activePlaylistId)) {
-            activePlaylistId = null;
-        }
         save();
+        if (wasActive) {
+            setActivePlaylist(null);
+        }
     }
 
     public static void persist() {
         save();
     }
 
+    // Единственное место, где меняется activePlaylistId — всегда синхронно
+    // обновляет и in-memory состояние, и персистентный ModConfig
     public static void setActivePlaylist(String id) {
         activePlaylistId = id;
+        ModConfig config = ModConfig.get();
+        if (!Objects.equals(config.activePlaylistId, id)) {
+            config.activePlaylistId = id;
+            config.save();
+        }
     }
 
     public static String getActivePlaylistId() {
@@ -88,6 +101,6 @@ public class PlaylistManager {
     }
 
     public static void clearActivePlaylist() {
-        activePlaylistId = null;
+        setActivePlaylist(null);
     }
 }

@@ -7,7 +7,6 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
-import soke.musicdelay.ModConfig;
 
 import java.util.List;
 
@@ -29,8 +28,6 @@ public class PlaylistManagerScreen extends Screen {
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.stop_active"), b -> {
             PlaylistManager.setActivePlaylist(null);
-            ModConfig.get().activePlaylistId = null;
-            ModConfig.get().save();
             MusicDelayReducerClient.resetPlaybackState();
             refreshList();
         }).bounds(this.width / 2 - 205, this.height - 30, 200, 20).build());
@@ -123,10 +120,9 @@ public class PlaylistManagerScreen extends Screen {
                 int my = (int) event.y();
 
                 if (isOverButton(mx, my, deleteButtonX(), 16)) {
+                    boolean wasActive = isActive();
                     PlaylistManager.remove(playlist);
-                    if (isActive()) {
-                        ModConfig.get().activePlaylistId = null;
-                        ModConfig.get().save();
+                    if (wasActive) {
                         MusicDelayReducerClient.resetPlaybackState();
                     }
                     refreshList();
@@ -139,8 +135,6 @@ public class PlaylistManagerScreen extends Screen {
                 }
 
                 PlaylistManager.setActivePlaylist(playlist.id);
-                ModConfig.get().activePlaylistId = playlist.id;
-                ModConfig.get().save();
                 MusicDelayReducerClient.resetPlaybackState();
                 refreshList();
                 return true;

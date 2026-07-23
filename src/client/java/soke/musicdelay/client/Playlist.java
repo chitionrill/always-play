@@ -31,6 +31,18 @@ public class Playlist {
             this.value = value;
         }
 
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof PlaylistEntry other)) return false;
+            return java.util.Objects.equals(type, other.type) && java.util.Objects.equals(value, other.value);
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(type, value);
+        }
+
         public static PlaylistEntry ofCustom(String path) {
             return new PlaylistEntry("CUSTOM", path);
         }

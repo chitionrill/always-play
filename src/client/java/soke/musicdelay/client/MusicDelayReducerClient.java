@@ -256,8 +256,6 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		if (unified == null) return;
 
 		PlaylistManager.setActivePlaylist(playlist.id);
-		ModConfig.get().activePlaylistId = playlist.id;
-		ModConfig.get().save();
 
 		MusicTracker.get().clearPending();
 		autoplayCountdown = 0;
@@ -341,8 +339,6 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		MusicTracker tracker = MusicTracker.get();
 
 		PlaylistManager.setActivePlaylist(null);
-		ModConfig.get().activePlaylistId = null;
-		ModConfig.get().save();
 
 		tracker.clearPending();
 		somethingPlaying = true;

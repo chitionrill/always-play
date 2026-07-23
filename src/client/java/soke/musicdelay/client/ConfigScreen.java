@@ -278,7 +278,8 @@ public class ConfigScreen extends Screen {
                 );
 
                 if (result != null) {
-                    CustomTrackManager.get().addTrack(Path.of(result));
+                    Path selected = Path.of(result);
+                    net.minecraft.client.Minecraft.getInstance().execute(() -> CustomTrackManager.get().addTrack(selected));
                 }
             } catch (Exception e) {
                 e.printStackTrace();
