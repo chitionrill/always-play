@@ -66,8 +66,9 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
     @Override
     @Unique
     public void mdr$playFixed(Sound sound) {
-        MusicTracker tracker = MusicTracker.get();
-        tracker.setNavigating(true);
+        // Примечание: setNavigating(true/false) здесь не нужен — этот путь не вызывает
+        // vanilla startPlaying(), поэтому наш перехват onTrackStarted (который проверяет
+        // isNavigating()) в принципе не срабатывает для этого метода
         SoundInstance instance = new FixedSoundInstance(
                 sound,
                 Identifier.fromNamespaceAndPath("music-delay-reducer", "fixed_music"),
@@ -77,11 +78,7 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
         Minecraft.getInstance().getSoundManager().play(instance);
         this.currentMusic = instance;
         this.nextSongDelay = Integer.MAX_VALUE;
-        // Отмечаем, что тост "Сейчас играет" уже показан — иначе игра сама попытается
-        // показать свой собственный тост (со сломанным названием для пластинок) в другой момент,
-        // например при открытии меню паузы
         this.toastShown = true;
-        tracker.setNavigating(false);
     }
 
     @Override

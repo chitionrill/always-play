@@ -128,6 +128,9 @@ public class WavPlayer {
         preloadedTracks.put(file, future);
         PRELOAD_EXECUTOR.submit(() -> {
             try {
+                // Считаем громкость здесь же, в фоновом потоке — если результата ещё нет в кэше,
+                // это самая тяжёлая часть подготовки трека, и делать её на тик-потоке нельзя
+                TrackVolumeManager.getGainOffsetDb(file);
                 AudioTrack t = AudioTrack.open(file);
                 future.complete(t);
             } catch (Exception e) {

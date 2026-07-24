@@ -46,8 +46,20 @@ public class TrackVolumeManager {
         }
     }
 
+    // Ключ включает путь + время изменения + размер файла — если файл заменили
+    // (даже с тем же именем), ключ автоматически станет другим, и кэш пересчитается сам
+    private static String buildKey(Path trackFile) {
+        try {
+            long modified = Files.getLastModifiedTime(trackFile).toMillis();
+            long size = Files.size(trackFile);
+            return trackFile.toAbsolutePath().normalize() + "|" + modified + "|" + size;
+        } catch (IOException e) {
+            return trackFile.toAbsolutePath().normalize().toString();
+        }
+    }
+
     public static double getGainOffsetDb(Path trackFile) {
-        String key = trackFile.getFileName().toString();
+        String key = buildKey(trackFile);
         Double cached = cache.get(key);
         if (cached != null) return cached;
 
