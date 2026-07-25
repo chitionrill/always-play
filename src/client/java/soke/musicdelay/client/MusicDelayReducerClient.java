@@ -36,6 +36,8 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 	private static int volumeUpHeldTicks = 0;
 	private static int volumeDownHeldTicks = 0;
+	private static Playlist.PlaylistEntry plannedPlaylistEntry = null;
+	private static final int PLAYLIST_MIN_PRELOAD_TICKS = 40; // минимум 2 секунды на подготовку трека
 	private static final int VOLUME_INITIAL_DELAY_TICKS = 8;
 	private static final int VOLUME_REPEAT_INTERVAL_TICKS = 2;
 
@@ -136,7 +138,8 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				} else if (playlistMode) {
 					WavPlayer.stop();
 					somethingPlaying = false;
-					autoplayCountdown = skipDelayTicks;
+					autoplayCountdown = Math.max(skipDelayTicks, PLAYLIST_MIN_PRELOAD_TICKS);
+					plannedPlaylistEntry = null;
 				} else if ("VANILLA".equals(mode)) {
 					mixin.mdr$unblock(skipDelayTicks);
 				} else {
@@ -176,13 +179,27 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 						int min = config.minDelaySeconds * 20;
 						int max = Math.max(min + 1, config.maxDelaySeconds * 20);
 						autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
+						plannedPlaylistEntry = null;
 					}
 
 					if (!somethingPlaying) {
+						// Выбираем трек и запускаем предзагрузку заранее, как только известно
+						// сколько ждать — чтобы к моменту реального старта файл уже был готов
+						if (plannedPlaylistEntry == null) {
+							plannedPlaylistEntry = PlaylistOrderManager.pickNext(activePlaylist, config.trackOrderMode);
+							if (plannedPlaylistEntry != null && "CUSTOM".equals(plannedPlaylistEntry.type)) {
+								WavPlayer.preload(java.nio.file.Path.of(plannedPlaylistEntry.value));
+							}
+						}
+
 						if (autoplayCountdown > 0) {
 							autoplayCountdown--;
-						} else {
-							tryPlayNextFromPlaylist(mixin, activePlaylist, config);
+						} else if (plannedPlaylistEntry != null) {
+							UnifiedTrack unified = plannedPlaylistEntry.toUnifiedTrack();
+							if (unified != null) {
+								playNewTrack(mixin, unified);
+							}
+							plannedPlaylistEntry = null;
 						}
 					}
 				}
@@ -429,15 +446,22 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		mixin.mdr$stopAndBlock();
 		MusicTracker.get().clearPending();
 		somethingPlaying = false;
-		autoplayCountdown = 0;
 		plannedAutoplayPath = null;
 		plannedAutoplayIsVanilla = false;
 		TrackOrderManager.reset();
 		PlaylistOrderManager.reset();
+		plannedPlaylistEntry = null;
 
 		Playlist active = PlaylistManager.getActivePlaylist();
-		if (active == null && "VANILLA".equals(ModConfig.get().playbackMode)) {
-			mixin.mdr$unblock(1);
+		if (active != null) {
+			// Даём предзагрузке первого трека время закончиться, прежде чем реально его запускать —
+			// без этой паузы первый трек плейлиста может вызвать заметный фриз
+			autoplayCountdown = 40; // 2 секунды
+		} else {
+			autoplayCountdown = 0;
+			if ("VANILLA".equals(ModConfig.get().playbackMode)) {
+				mixin.mdr$unblock(1);
+			}
 		}
 	}
 
