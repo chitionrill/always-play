@@ -138,8 +138,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				} else if (playlistMode) {
 					WavPlayer.stop();
 					somethingPlaying = false;
-					autoplayCountdown = Math.max(skipDelayTicks, PLAYLIST_MIN_PRELOAD_TICKS);
-					plannedPlaylistEntry = null;
+					autoplayCountdown = primePlaylistEntryAndGetDelay(activePlaylist, config, skipDelayTicks);
 				} else if ("VANILLA".equals(mode)) {
 					mixin.mdr$unblock(skipDelayTicks);
 				} else {
@@ -183,13 +182,9 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 					}
 
 					if (!somethingPlaying) {
-						// Выбираем трек и запускаем предзагрузку заранее, как только известно
-						// сколько ждать — чтобы к моменту реального старта файл уже был готов
 						if (plannedPlaylistEntry == null) {
-							plannedPlaylistEntry = PlaylistOrderManager.pickNext(activePlaylist, config.trackOrderMode);
-							if (plannedPlaylistEntry != null && "CUSTOM".equals(plannedPlaylistEntry.type)) {
-								WavPlayer.preload(java.nio.file.Path.of(plannedPlaylistEntry.value));
-							}
+							int required = primePlaylistEntryAndGetDelay(activePlaylist, config, 0);
+							autoplayCountdown = Math.max(autoplayCountdown, required);
 						}
 
 						if (autoplayCountdown > 0) {
@@ -232,6 +227,22 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				}
 			}
 		});
+	}
+
+	// Выбирает следующий трек плейлиста и решает, сколько реально нужно подождать:
+// 0 (или заданную настройку), если трек уже анализирован раньше, и минимум
+// PLAYLIST_MIN_PRELOAD_TICKS — только если это свежий, ещё не закэшированный файл
+	private static int primePlaylistEntryAndGetDelay(Playlist playlist, ModConfig config, int baseDelayTicks) {
+		Playlist.PlaylistEntry entry = PlaylistOrderManager.pickNext(playlist, config.trackOrderMode);
+		plannedPlaylistEntry = entry;
+		if (entry != null && "CUSTOM".equals(entry.type)) {
+			Path path = Path.of(entry.value);
+			WavPlayer.preload(path);
+			if (!TrackVolumeManager.isCached(path)) {
+				return Math.max(baseDelayTicks, PLAYLIST_MIN_PRELOAD_TICKS);
+			}
+		}
+		return baseDelayTicks;
 	}
 
 	private static void tryPlayNextFromPlaylist(IMusicManagerMixin mixin, Playlist playlist, ModConfig config) {
@@ -454,9 +465,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 		Playlist active = PlaylistManager.getActivePlaylist();
 		if (active != null) {
-			// Даём предзагрузке первого трека время закончиться, прежде чем реально его запускать —
-			// без этой паузы первый трек плейлиста может вызвать заметный фриз
-			autoplayCountdown = 40; // 2 секунды
+			autoplayCountdown = 0; // конкретная задержка решится динамически при выборе первого трека
 		} else {
 			autoplayCountdown = 0;
 			if ("VANILLA".equals(ModConfig.get().playbackMode)) {

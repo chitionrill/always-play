@@ -2,6 +2,7 @@ package soke.musicdelay.client;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -10,7 +11,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MusicBrowserScreen extends Screen {
 
@@ -20,6 +23,8 @@ public class MusicBrowserScreen extends Screen {
 
     private final @Nullable Screen parent;
     private TrackListWidget trackList;
+    private EditBox searchBox;
+    private List<BrowsableTrack> allTracks;
 
     public MusicBrowserScreen(@Nullable Screen parent) {
         super(Component.translatable("music-delay-reducer.browser.title"));
@@ -28,29 +33,84 @@ public class MusicBrowserScreen extends Screen {
 
     @Override
     protected void init() {
-        List<BrowsableTrack> allTracks = BrowsableTrack.buildFullList();
+        allTracks = BrowsableTrack.buildFullList();
+        int centerX = this.width / 2;
 
-        trackList = new TrackListWidget(this.minecraft, this.width, this.height - 70, 35, 22);
-        trackList.setEntries(allTracks);
+        searchBox = new EditBox(this.font, centerX - 100, 35, 200, 20, Component.translatable("music-delay-reducer.browser.search"));
+        searchBox.setHint(Component.translatable("music-delay-reducer.browser.search"));
+        searchBox.setResponder(this::applyFilter);
+        this.addRenderableWidget(searchBox);
+        this.setInitialFocus(searchBox);
+
+        trackList = new TrackListWidget(this.minecraft, this.width, this.height - 95, 60, 22);
         this.addRenderableWidget(trackList);
+        applyFilter("");
 
         if (PlaylistBuilder.isBuilding()) {
             this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.done"), b ->
                             this.minecraft.gui.setScreen(new PlaylistNameScreen(this)))
-                    .bounds(this.width / 2 - 105, this.height - 30, 100, 20).build());
+                    .bounds(centerX - 105, this.height - 30, 100, 20).build());
 
             this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.browser.close"), b -> {
                 PlaylistBuilder.cancelBuilding();
                 this.onClose();
-            }).bounds(this.width / 2 + 5, this.height - 30, 100, 20).build());
+            }).bounds(centerX + 5, this.height - 30, 100, 20).build());
         } else {
             this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.manager_button"), b ->
                             this.minecraft.gui.setScreen(new PlaylistManagerScreen(this)))
-                    .bounds(this.width / 2 - 205, this.height - 30, 200, 20).build());
+                    .bounds(centerX - 205, this.height - 30, 200, 20).build());
 
             this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.browser.close"), b -> this.onClose())
-                    .bounds(this.width / 2 + 5, this.height - 30, 200, 20).build());
+                    .bounds(centerX + 5, this.height - 30, 200, 20).build());
         }
+    }
+
+    // Ищет совпадение в любом месте названия (не только с начала), без учёта регистра.
+    // Разделы (пластинки/свои треки) показываются только если внутри есть хотя бы одно совпадение
+    private void applyFilter(String rawQuery) {
+        String query = rawQuery.trim().toLowerCase(Locale.ROOT);
+        List<BrowsableTrack> filtered = new ArrayList<>();
+        List<BrowsableTrack> pendingSection = new ArrayList<>();
+        BrowsableTrack pendingHeader = null;
+
+        for (BrowsableTrack track : allTracks) {
+            if (track.kind == BrowsableTrack.Kind.HEADER) {
+                if (pendingHeader != null && !pendingSection.isEmpty()) {
+                    filtered.add(pendingHeader);
+                    filtered.addAll(pendingSection);
+                }
+                pendingHeader = track;
+                pendingSection = new ArrayList<>();
+            } else {
+                boolean matches = query.isEmpty() || track.displayName.getString().toLowerCase(Locale.ROOT).contains(query);
+                if (matches) {
+                    if (pendingHeader == null) {
+                        filtered.add(track);
+                    } else {
+                        pendingSection.add(track);
+                    }
+                }
+            }
+        }
+        if (pendingHeader != null && !pendingSection.isEmpty()) {
+            filtered.add(pendingHeader);
+            filtered.addAll(pendingSection);
+        }
+
+        trackList.setEntries(filtered);
+    }
+
+    private void onAddClicked(BrowsableTrack track) {
+        if (PlaylistBuilder.isBuilding()) {
+            PlaylistBuilder.addEntry(track);
+            this.rebuildWidgets();
+        } else {
+            this.minecraft.gui.setScreen(new PlaylistChooserScreen(this, track));
+        }
+    }
+
+    private void onPlayClicked(BrowsableTrack track) {
+        MusicDelayReducerClient.playFromBrowser(track);
     }
 
     @Override
@@ -65,19 +125,6 @@ public class MusicBrowserScreen extends Screen {
         if (PlaylistBuilder.isBuilding()) {
             graphics.centeredText(this.font, Component.translatable("music-delay-reducer.playlist.building_count", PlaylistBuilder.getEntryCount()), this.width / 2, 26, 0xFF55FF55);
         }
-    }
-
-    private void onAddClicked(BrowsableTrack track) {
-        if (PlaylistBuilder.isBuilding()) {
-            PlaylistBuilder.addEntry(track);
-            this.rebuildWidgets();
-        } else {
-            this.minecraft.gui.setScreen(new PlaylistChooserScreen(this, track));
-        }
-    }
-
-    private void onPlayClicked(BrowsableTrack track) {
-        MusicDelayReducerClient.playFromBrowser(track);
     }
 
     private class TrackListWidget extends ObjectSelectionList<TrackListWidget.TrackEntry> {

@@ -56,5 +56,6 @@
   "music-delay-reducer.playlist.manager_title": "Мої плейлисти",
   "music-delay-reducer.playlist.manager_button": "Мої плейлисти",
   "music-delay-reducer.playlist.stop_active": "Зупинити плейлист (звичайний режим)",
+  "music-delay-reducer.browser.search": "Пошук треків...",
   "music-delay-reducer.playlist.view": "Перегляд"
 }

@@ -58,6 +58,10 @@ public class TrackVolumeManager {
         }
     }
 
+    public static boolean isCached(Path trackFile) {
+        return cache.containsKey(buildKey(trackFile));
+    }
+
     public static double getGainOffsetDb(Path trackFile) {
         String key = buildKey(trackFile);
         Double cached = cache.get(key);
