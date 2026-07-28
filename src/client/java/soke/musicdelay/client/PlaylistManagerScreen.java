@@ -120,12 +120,19 @@ public class PlaylistManagerScreen extends Screen {
                 int my = (int) event.y();
 
                 if (isOverButton(mx, my, deleteButtonX(), 16)) {
-                    boolean wasActive = isActive();
-                    PlaylistManager.remove(playlist);
-                    if (wasActive) {
-                        MusicDelayReducerClient.resetPlaybackState();
-                    }
-                    refreshList();
+                    PlaylistManagerScreen.this.minecraft.gui.setScreen(new ConfirmActionScreen(
+                            PlaylistManagerScreen.this,
+                            Component.translatable("music-delay-reducer.confirm.delete_playlist_title"),
+                            Component.translatable("music-delay-reducer.confirm.delete_playlist_message", playlist.name),
+                            () -> {
+                                boolean wasActive = isActive();
+                                PlaylistManager.remove(playlist);
+                                if (wasActive) {
+                                    MusicDelayReducerClient.resetPlaybackState();
+                                }
+                                refreshList();
+                            }
+                    ));
                     return true;
                 }
 

@@ -123,9 +123,16 @@ public class PlaylistDetailScreen extends Screen {
                     return true;
                 }
                 if (isOverButton(mx, my, removeButtonX(), 16)) {
-                    playlist.entries.remove(entry);
-                    PlaylistManager.persist();
-                    refreshList();
+                    PlaylistDetailScreen.this.minecraft.gui.setScreen(new ConfirmActionScreen(
+                            PlaylistDetailScreen.this,
+                            Component.translatable("music-delay-reducer.confirm.remove_track_title"),
+                            Component.translatable("music-delay-reducer.confirm.remove_track_message"),
+                            () -> {
+                                playlist.entries.remove(entry);
+                                PlaylistManager.persist();
+                                refreshList();
+                            }
+                    ));
                     return true;
                 }
                 return true;

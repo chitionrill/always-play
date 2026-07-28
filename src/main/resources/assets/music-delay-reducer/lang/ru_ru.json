@@ -57,5 +57,11 @@
   "music-delay-reducer.playlist.manager_button": "Мои плейлисты",
   "music-delay-reducer.playlist.stop_active": "Остановить плейлист (обычный режим)",
   "music-delay-reducer.browser.search": "Поиск треков...",
+  "music-delay-reducer.confirm.yes": "Да",
+  "music-delay-reducer.confirm.no": "Нет",
+  "music-delay-reducer.confirm.delete_playlist_title": "Удалить плейлист?",
+  "music-delay-reducer.confirm.delete_playlist_message": "Точно удалить \"%s\"? Это действие нельзя отменить.",
+  "music-delay-reducer.confirm.remove_track_title": "Удалить трек?",
+  "music-delay-reducer.confirm.remove_track_message": "Убрать этот трек из плейлиста?",
   "music-delay-reducer.playlist.view": "Просмотр"
 }

@@ -47,7 +47,7 @@ public class VanillaTrackRegistry {
             for (Sound sound : mixin.mdr$getAllSounds()) {
                 String loc = sound.getLocation().toString();
                 if (seenLocations.add(loc)) {
-                    Component name = Component.translatable(sound.getLocation().toShortLanguageKey());
+                    Component name = Component.translatable(sound.getLocation().toShortLanguageKey().replace("/", "."));
                     ambientResult.add(new VanillaEntry(sound, name));
                 }
             }

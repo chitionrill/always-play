@@ -57,5 +57,11 @@
   "music-delay-reducer.playlist.manager_button": "My Playlists",
   "music-delay-reducer.playlist.stop_active": "Stop Playlist (Use Normal Mode)",
   "music-delay-reducer.browser.search": "Search tracks...",
+  "music-delay-reducer.confirm.yes": "Yes",
+  "music-delay-reducer.confirm.no": "No",
+  "music-delay-reducer.confirm.delete_playlist_title": "Delete Playlist?",
+  "music-delay-reducer.confirm.delete_playlist_message": "Are you sure you want to delete \"%s\"? This cannot be undone.",
+  "music-delay-reducer.confirm.remove_track_title": "Remove Track?",
+  "music-delay-reducer.confirm.remove_track_message": "Remove this track from the playlist?",
   "music-delay-reducer.playlist.view": "View"
 }
