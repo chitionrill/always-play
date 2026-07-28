@@ -34,13 +34,12 @@ public class VanillaTrackRegistry {
     public static void refresh() {
         var soundManager = Minecraft.getInstance().getSoundManager();
 
-        // Фоновая атмосферная музыка
         List<VanillaEntry> ambientResult = new ArrayList<>();
         LinkedHashSet<String> seenLocations = new LinkedHashSet<>();
 
         for (Identifier id : soundManager.getAvailableSounds()) {
             if (!id.getNamespace().equals("minecraft")) continue;
-            if (!id.getPath().startsWith("music/") && !id.getPath().equals("music")) continue;
+            if (!id.getPath().startsWith("music.") && !id.getPath().equals("music")) continue;
 
             WeighedSoundEvents event = soundManager.getSoundEvent(id);
             if (!(event instanceof IWeighedSoundEventsMixin mixin)) continue;
@@ -48,14 +47,13 @@ public class VanillaTrackRegistry {
             for (Sound sound : mixin.mdr$getAllSounds()) {
                 String loc = sound.getLocation().toString();
                 if (seenLocations.add(loc)) {
-                    Component name = Component.translatable(sound.getLocation().toShortLanguageKey().replace("/", "."));
+                    Component name = Component.translatable(sound.getLocation().toShortLanguageKey());
                     ambientResult.add(new VanillaEntry(sound, name));
                 }
             }
         }
         cachedAmbient = ambientResult;
 
-        // Музыкальные пластинки — доступны только когда загружен мир
         List<VanillaEntry> discsResult = new ArrayList<>();
         Minecraft client = Minecraft.getInstance();
         if (client.level != null) {
@@ -64,10 +62,10 @@ public class VanillaTrackRegistry {
                         JukeboxSong song = holder.value();
                         Holder<SoundEvent> soundEventHolder = song.soundEvent();
                         Identifier location = soundEventHolder.value().location();
-                        WeighedSoundEvents event = soundManager.getSoundEvent(location);
-                        if (!(event instanceof IWeighedSoundEventsMixin mixin)) return;
+                        WeighedSoundEvents discEvent = soundManager.getSoundEvent(location);
+                        if (!(discEvent instanceof IWeighedSoundEventsMixin discMixin)) return;
 
-                        for (Sound sound : mixin.mdr$getAllSounds()) {
+                        for (Sound sound : discMixin.mdr$getAllSounds()) {
                             discsResult.add(new VanillaEntry(sound, song.description()));
                         }
                     })
