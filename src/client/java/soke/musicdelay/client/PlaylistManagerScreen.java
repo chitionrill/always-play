@@ -90,7 +90,8 @@ public class PlaylistManagerScreen extends Screen {
             }
 
             private int viewButtonX() {
-                return deleteButtonX() - 40;
+                int textWidth = font.width(Component.translatable("music-delay-reducer.playlist.view"));
+                return deleteButtonX() - textWidth - 10;
             }
 
             @Override
@@ -103,7 +104,8 @@ public class PlaylistManagerScreen extends Screen {
                 String label = playlist.name + " (" + playlist.entries.size() + ")";
                 graphics.text(font, Component.literal(label), getContentX() + 4, getContentY() + 6, 0xFFDDDDDD);
 
-                boolean viewHovered = isOverButton(mouseX, mouseY, viewButtonX(), 32);
+                int viewTextWidth = font.width(Component.translatable("music-delay-reducer.playlist.view"));
+                boolean viewHovered = isOverButton(mouseX, mouseY, viewButtonX(), viewTextWidth);
                 graphics.text(font, Component.translatable("music-delay-reducer.playlist.view"), viewButtonX(), getContentY() + 6, viewHovered ? 0xFFFFFFFF : 0xFF55AAFF);
 
                 boolean deleteHovered = isOverButton(mouseX, mouseY, deleteButtonX(), 16);
