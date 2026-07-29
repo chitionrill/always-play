@@ -63,5 +63,6 @@
   "music-delay-reducer.confirm.delete_playlist_message": "Точно удалить \"%s\"? Это действие нельзя отменить.",
   "music-delay-reducer.confirm.remove_track_title": "Удалить трек?",
   "music-delay-reducer.confirm.remove_track_message": "Убрать этот трек из плейлиста?",
+  "music-delay-reducer.browser.add_selected": "Добавить выбранные (%s)",
   "music-delay-reducer.playlist.view": "Просмотр"
 }

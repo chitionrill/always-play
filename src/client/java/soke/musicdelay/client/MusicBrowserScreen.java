@@ -12,8 +12,10 @@ import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public class MusicBrowserScreen extends Screen {
 
@@ -24,7 +26,13 @@ public class MusicBrowserScreen extends Screen {
     private final @Nullable Screen parent;
     private TrackListWidget trackList;
     private EditBox searchBox;
+    private Button addSelectedButton;
     private List<BrowsableTrack> allTracks;
+
+    private final Set<BrowsableTrack> selectedTracks = new LinkedHashSet<>();
+
+    private double savedScrollAmount = 0;
+    private String savedQuery = "";
 
     public MusicBrowserScreen(@Nullable Screen parent) {
         super(Component.translatable("music-delay-reducer.browser.title"));
@@ -33,18 +41,36 @@ public class MusicBrowserScreen extends Screen {
 
     @Override
     protected void init() {
+        // Запоминаем позицию прокрутки и текст поиска перед пересборкой экрана,
+        // чтобы список не "прыгал" на верх после добавления трека в плейлист
+        if (trackList != null) {
+            savedScrollAmount = trackList.getScrollAmountPublic();
+        }
+        if (searchBox != null) {
+            savedQuery = searchBox.getValue();
+        }
+
         allTracks = BrowsableTrack.buildFullList();
         int centerX = this.width / 2;
 
         searchBox = new EditBox(this.font, centerX - 100, 35, 200, 20, Component.translatable("music-delay-reducer.browser.search"));
         searchBox.setHint(Component.translatable("music-delay-reducer.browser.search"));
+        searchBox.setValue(savedQuery);
         searchBox.setResponder(this::applyFilter);
         this.addRenderableWidget(searchBox);
-        this.setInitialFocus(searchBox);
 
-        trackList = new TrackListWidget(this.minecraft, this.width, this.height - 95, 60, 22);
+        addSelectedButton = Button.builder(Component.literal(""), b -> onAddSelectedClicked())
+                .bounds(centerX - 100, 60, 200, 20).build();
+        this.addRenderableWidget(addSelectedButton);
+
+        trackList = new TrackListWidget(this.minecraft, this.width, this.height - 120, 85, 22);
         this.addRenderableWidget(trackList);
-        applyFilter("");
+        applyFilter(savedQuery);
+        trackList.setScrollAmount(savedScrollAmount);
+
+        if (searchBox.getValue().isEmpty()) {
+            this.setInitialFocus(searchBox);
+        }
 
         if (PlaylistBuilder.isBuilding()) {
             this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.done"), b ->
@@ -65,8 +91,6 @@ public class MusicBrowserScreen extends Screen {
         }
     }
 
-    // Ищет совпадение в любом месте названия (не только с начала), без учёта регистра.
-    // Разделы (пластинки/свои треки) показываются только если внутри есть хотя бы одно совпадение
     private void applyFilter(String rawQuery) {
         String query = rawQuery.trim().toLowerCase(Locale.ROOT);
         List<BrowsableTrack> filtered = new ArrayList<>();
@@ -105,7 +129,24 @@ public class MusicBrowserScreen extends Screen {
             PlaylistBuilder.addEntry(track);
             this.rebuildWidgets();
         } else {
-            this.minecraft.gui.setScreen(new PlaylistChooserScreen(this, track));
+            this.minecraft.gui.setScreen(new PlaylistChooserScreen(this, List.of(track)));
+        }
+    }
+
+    // Добавляет разом все выделенные (зелёные) треки — либо в текущий собираемый плейлист,
+    // либо открывает выбор плейлиста для всей группы сразу
+    private void onAddSelectedClicked() {
+        if (selectedTracks.isEmpty()) return;
+        List<BrowsableTrack> tracks = new ArrayList<>(selectedTracks);
+        selectedTracks.clear();
+
+        if (PlaylistBuilder.isBuilding()) {
+            for (BrowsableTrack track : tracks) {
+                PlaylistBuilder.addEntry(track);
+            }
+            this.rebuildWidgets();
+        } else {
+            this.minecraft.gui.setScreen(new PlaylistChooserScreen(this, tracks));
         }
     }
 
@@ -120,6 +161,11 @@ public class MusicBrowserScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        addSelectedButton.visible = !selectedTracks.isEmpty();
+        if (addSelectedButton.visible) {
+            addSelectedButton.setMessage(Component.translatable("music-delay-reducer.browser.add_selected", selectedTracks.size()));
+        }
+
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         graphics.centeredText(this.font, this.title, this.width / 2, 15, 0xFFFFFFFF);
         if (PlaylistBuilder.isBuilding()) {
@@ -140,6 +186,10 @@ public class MusicBrowserScreen extends Screen {
             }
         }
 
+        double getScrollAmountPublic() {
+            return this.scrollAmount();
+        }
+
         @Override
         public int getRowWidth() {
             return Math.min(420, this.width - 20);
@@ -147,7 +197,6 @@ public class MusicBrowserScreen extends Screen {
 
         class TrackEntry extends ObjectSelectionList.Entry<TrackEntry> {
             final BrowsableTrack track;
-            boolean selected = false;
 
             TrackEntry(BrowsableTrack track) {
                 this.track = track;
@@ -173,9 +222,10 @@ public class MusicBrowserScreen extends Screen {
                     return;
                 }
 
-                if (hovered || selected) {
+                boolean isSelected = selectedTracks.contains(track);
+                if (hovered || isSelected) {
                     graphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(),
-                            selected ? 0x80336633 : 0x40FFFFFF);
+                            isSelected ? 0x80336633 : 0x40FFFFFF);
                 }
 
                 graphics.blitSprite(RenderPipelines.GUI_TEXTURED, MUSIC_NOTES_SPRITE, getContentX(), getContentY() + 3, 16, 16, -1);
@@ -214,7 +264,11 @@ public class MusicBrowserScreen extends Screen {
                     return true;
                 }
 
-                selected = !selected;
+                if (selectedTracks.contains(track)) {
+                    selectedTracks.remove(track);
+                } else {
+                    selectedTracks.add(track);
+                }
                 return true;
             }
         }

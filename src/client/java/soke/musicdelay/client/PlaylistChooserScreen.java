@@ -13,12 +13,12 @@ import java.util.List;
 public class PlaylistChooserScreen extends Screen {
 
     private final @Nullable Screen parent;
-    private final BrowsableTrack track;
+    private final List<BrowsableTrack> tracks;
 
-    public PlaylistChooserScreen(@Nullable Screen parent, BrowsableTrack track) {
+    public PlaylistChooserScreen(@Nullable Screen parent, List<BrowsableTrack> tracks) {
         super(Component.translatable("music-delay-reducer.playlist.choose_title"));
         this.parent = parent;
-        this.track = track;
+        this.tracks = tracks;
     }
 
     @Override
@@ -27,7 +27,9 @@ public class PlaylistChooserScreen extends Screen {
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.create_new"), b -> {
             PlaylistBuilder.startBuilding();
-            PlaylistBuilder.addEntry(track);
+            for (BrowsableTrack track : tracks) {
+                PlaylistBuilder.addEntry(track);
+            }
             this.minecraft.gui.setScreen(parent);
         }).bounds(centerX - 100, 35, 200, 20).build());
 
@@ -92,7 +94,9 @@ public class PlaylistChooserScreen extends Screen {
 
             @Override
             public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-                playlist.entries.add(track.toPlaylistEntry());
+                for (BrowsableTrack track : tracks) {
+                    playlist.entries.add(track.toPlaylistEntry());
+                }
                 PlaylistManager.persist();
                 PlaylistChooserScreen.this.onClose();
                 return true;

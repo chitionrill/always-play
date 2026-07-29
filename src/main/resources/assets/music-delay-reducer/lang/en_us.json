@@ -63,5 +63,6 @@
   "music-delay-reducer.confirm.delete_playlist_message": "Are you sure you want to delete \"%s\"? This cannot be undone.",
   "music-delay-reducer.confirm.remove_track_title": "Remove Track?",
   "music-delay-reducer.confirm.remove_track_message": "Remove this track from the playlist?",
+  "music-delay-reducer.browser.add_selected": "Add Selected (%s)",
   "music-delay-reducer.playlist.view": "View"
 }
