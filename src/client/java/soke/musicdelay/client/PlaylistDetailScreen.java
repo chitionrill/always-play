@@ -41,6 +41,26 @@ public class PlaylistDetailScreen extends Screen {
         this.minecraft.gui.setScreen(parent);
     }
 
+    // --- новое: перехват drag-событий на уровне экрана ---
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (list != null && list.isDraggingEntry()) {
+            list.updateDrag((int) event.y());
+            return true;
+        }
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (list != null && list.isDraggingEntry()) {
+            list.endDrag();
+            return true;
+        }
+        return super.mouseReleased(event);
+    }
+    // --- конец нового ---
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
@@ -48,6 +68,8 @@ public class PlaylistDetailScreen extends Screen {
     }
 
     private class EntryListWidget extends ObjectSelectionList<EntryListWidget.TrackRow> {
+
+        private Playlist.PlaylistEntry draggingEntry = null; // новое
 
         EntryListWidget(net.minecraft.client.Minecraft minecraft, int width, int height, int y, int itemHeight) {
             super(minecraft, width, height, y, itemHeight);
@@ -64,6 +86,45 @@ public class PlaylistDetailScreen extends Screen {
         public int getRowWidth() {
             return Math.min(400, this.width - 20);
         }
+
+        // --- новое: логика drag&drop ---
+        boolean isDraggingEntry() {
+            return draggingEntry != null;
+        }
+
+        void startDrag(Playlist.PlaylistEntry entry) {
+            draggingEntry = entry;
+        }
+
+        void updateDrag(int mouseY) {
+            if (draggingEntry == null) return;
+            int targetIndex = indexAtY(mouseY);
+            int currentIndex = playlist.entries.indexOf(draggingEntry);
+            if (targetIndex >= 0 && targetIndex != currentIndex) {
+                playlist.entries.remove(draggingEntry);
+                playlist.entries.add(targetIndex, draggingEntry);
+                setEntries(playlist.entries);
+            }
+        }
+
+        void endDrag() {
+            if (draggingEntry != null) {
+                PlaylistManager.persist();
+            }
+            draggingEntry = null;
+        }
+
+        private int indexAtY(int mouseY) {
+            java.util.List<TrackRow> rows = this.children();
+            for (int i = 0; i < rows.size(); i++) {
+                TrackRow row = rows.get(i);
+                if (mouseY < row.getY() + row.getHeight() / 2) {
+                    return i;
+                }
+            }
+            return rows.size() - 1;
+        }
+        // --- конец нового ---
 
         class TrackRow extends ObjectSelectionList.Entry<TrackRow> {
             final Playlist.PlaylistEntry entry;
@@ -82,6 +143,10 @@ public class PlaylistDetailScreen extends Screen {
                 return VanillaTrackRegistry.getDisplayNameForLocation(net.minecraft.resources.Identifier.parse(entry.value));
             }
 
+            private int dragHandleX() { // новое
+                return getContentX();
+            }
+
             private int removeButtonX() {
                 return getContentRight() - 16;
             }
@@ -97,10 +162,17 @@ public class PlaylistDetailScreen extends Screen {
 
             @Override
             public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float partialTick) {
-                if (hovered) {
+                boolean isDraggingThis = entry == draggingEntry; // новое
+                if (isDraggingThis) {
+                    graphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), 0x8033AA33);
+                } else if (hovered) {
                     graphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), 0x40FFFFFF);
                 }
-                graphics.text(font, displayName(), getContentX() + 4, getContentY() + 6, 0xFFDDDDDD);
+
+                boolean handleHovered = isOverButton(mouseX, mouseY, dragHandleX(), 14); // новое
+                graphics.text(font, "\u2261", dragHandleX() + 3, getContentY() + 6, handleHovered ? 0xFFFFFFFF : 0xFF888888);
+
+                graphics.text(font, displayName(), getContentX() + 18, getContentY() + 6, 0xFFDDDDDD);
 
                 boolean playHovered = isOverButton(mouseX, mouseY, playButtonX(), 16);
                 graphics.text(font, "\u25B6", playButtonX() + 3, getContentY() + 6, playHovered ? 0xFFFFFFFF : 0xFF55FF55);
@@ -118,6 +190,10 @@ public class PlaylistDetailScreen extends Screen {
                 int mx = (int) event.x();
                 int my = (int) event.y();
 
+                if (isOverButton(mx, my, dragHandleX(), 14)) { // новое
+                    startDrag(entry);
+                    return true;
+                }
                 if (isOverButton(mx, my, playButtonX(), 16)) {
                     MusicDelayReducerClient.playPlaylistEntryDirect(playlist, entry);
                     return true;
