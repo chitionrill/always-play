@@ -45,9 +45,11 @@ public class TrackOrderManager {
             }
             default: { // RANDOM — как было раньше
                 Path chosen;
+                int attempts = 0;
                 do {
                     chosen = sorted.get(RANDOM.nextInt(sorted.size()));
-                } while (chosen.equals(lastPlayed));
+                    attempts++;
+                } while (chosen.equals(lastPlayed) && attempts < 10);
                 return chosen;
             }
         }

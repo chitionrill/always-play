@@ -23,6 +23,7 @@ public abstract class NowPlayingToastMixin {
     private static final Identifier MDR_BACKGROUND = Identifier.withDefaultNamespace("toast/now_playing");
     private static final Identifier MDR_NOTES = Identifier.parse("icon/music_notes");
     private static final int MDR_TEXT_COLOR = DyeColor.LIGHT_GRAY.getTextColor();
+    private static final int TEXT_Y_OFFSET = 15 - 9 / 2; // вертикальное центрирование текста внутри тоста высотой 30px
 
     // Родной метод игры показывает название музыки "в лоб", напрямую переводя технический путь файла —
     // это ломается для музыкальных пластинок (у них название хранится иначе). Подменяем на правильный поиск.
@@ -38,7 +39,7 @@ public abstract class NowPlayingToastMixin {
 
         graphics.blitSprite(RenderPipelines.GUI_TEXTURED, MDR_BACKGROUND, 0, 0, width, 30);
         graphics.blitSprite(RenderPipelines.GUI_TEXTURED, MDR_NOTES, 7, 7, 16, 16, -1);
-        graphics.text(font, name, 30, 15 - 9 / 2, MDR_TEXT_COLOR);
+        graphics.text(font, name, 30, TEXT_Y_OFFSET, MDR_TEXT_COLOR);
 
         ci.cancel();
     }
