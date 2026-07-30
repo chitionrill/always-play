@@ -12,6 +12,7 @@ public class ModKeybindings {
     public static KeyMapping volumeUp;
     public static KeyMapping volumeDown;
     public static KeyMapping openMusicBrowser;
+    public static KeyMapping pauseResume;
 
     private static final KeyMapping.Category CATEGORY =
             KeyMapping.Category.register(Identifier.fromNamespaceAndPath("music-delay-reducer", "general"));
@@ -49,6 +50,13 @@ public class ModKeybindings {
                 "key.music-delay-reducer.open_browser",
                 InputConstants.Type.KEYSYM,
                 InputConstants.KEY_M,
+                CATEGORY
+        ));
+
+        pauseResume = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.music-delay-reducer.pause_resume",
+                InputConstants.Type.KEYSYM,
+                InputConstants.KEY_NUMPAD0,
                 CATEGORY
         ));
     }

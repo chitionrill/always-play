@@ -18,6 +18,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 	private static final Random RANDOM = new Random();
 	private static boolean somethingPlaying = false;
+	private static boolean paused = false; // новое
 	private static int autoplayCountdown = 0;
 	private static int folderRefreshCountdown = 0;
 	private static Path lastCustomPath = null;
@@ -72,6 +73,25 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			MusicTracker tracker = MusicTracker.get();
 			MusicManager manager = client.getMusicManager();
 			IMusicManagerMixin mixin = (IMusicManagerMixin) manager;
+
+			// --- новое: пауза/возобновление ---
+			if (ModKeybindings.pauseResume.consumeClick()) {
+				paused = !paused;
+				if (paused) {
+					WavPlayer.pause();
+					mixin.mdr$setGain(0f);
+				} else {
+					WavPlayer.resume();
+					mixin.mdr$setGain(client.options.getSoundSourceVolume(SoundSource.MUSIC));
+				}
+			}
+			if (paused) {
+				// Замораживаем весь остальной тик: не даём плейлисту/автовоспроизведению
+				// среагировать на "завершение" трека, пока мы стоим на паузе
+				return;
+			}
+			// --- конец нового ---
+
 			ModConfig config = ModConfig.get();
 			String mode = config.playbackMode;
 			int skipDelayTicks = config.skipDelaySeconds * 20;

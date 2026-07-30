@@ -23,6 +23,7 @@ public class WavPlayer {
     private static SourceDataLine line;
     private static Thread engineThread;
     private static volatile boolean running = false;
+    private static volatile boolean paused = false; // новое
     private static volatile float cachedMusicVolume = 1.0f;
 
     private static class TrackState {
@@ -66,6 +67,14 @@ public class WavPlayer {
         byte[] out = new byte[BLOCK_FRAMES * 4];
 
         while (running) {
+            if (paused) {
+                // Ничего не двигаем — ни current, ни outgoing — так и позиция не уезжает,
+                // просто шлём тишину, чтобы линия не буферизовалась/не глохла
+                Arrays.fill(out, (byte) 0);
+                line.write(out, 0, out.length);
+                continue;
+            }
+
             TrackState currentLocal;
             List<TrackState> sources;
             synchronized (lock) {
@@ -196,6 +205,18 @@ public class WavPlayer {
         synchronized (lock) {
             return current != null && !current.resampler.isFinished();
         }
+    }
+
+    public static void pause() {
+        paused = true;
+    }
+
+    public static void resume() {
+        paused = false;
+    }
+
+    public static boolean isPaused() {
+        return paused;
     }
 
     public static void tickVolumeSync() {

@@ -46,6 +46,7 @@
   "music-delay-reducer.browser.title": "Браузер музики",
   "music-delay-reducer.browser.close": "Закрити",
   "key.music-delay-reducer.open_browser": "Відкрити браузер музики",
+  "key.music-delay-reducer.pause_resume": "Пауза/Відновити",
   "music-delay-reducer.playlist.name_title": "Назва плейлиста",
   "music-delay-reducer.playlist.name_field": "Назва плейлиста",
   "music-delay-reducer.playlist.save": "Зберегти",
