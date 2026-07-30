@@ -4,6 +4,7 @@ import net.minecraft.client.resources.sounds.Sound;
 import net.minecraft.network.chat.Component;
 
 import java.nio.file.Path;
+import java.util.Objects;
 
 public class BrowsableTrack {
 
@@ -80,4 +81,29 @@ public class BrowsableTrack {
 
         return result;
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof BrowsableTrack other)) return false;
+        if (kind != other.kind) return false;
+        if (kind == Kind.CUSTOM) {
+            return Objects.equals(customPath, other.customPath);
+        }
+        if (kind == Kind.HEADER) {
+            // разные заголовки не должны схлопываться в один — сравниваем по тексту
+            return Objects.equals(displayName.getString(), other.displayName.getString());
+        }
+        // AMBIENT / DISC — сравниваем по локации ванильного трека
+        return vanillaSound != null && other.vanillaSound != null
+                && Objects.equals(vanillaSound.getLocation(), other.vanillaSound.getLocation());
+    }
+
+    @Override
+    public int hashCode() {
+        if (kind == Kind.CUSTOM) return Objects.hash(kind, customPath);
+        if (kind == Kind.HEADER) return Objects.hash(kind, displayName.getString());
+        return Objects.hash(kind, vanillaSound != null ? vanillaSound.getLocation() : null);
+    }
+
 }
