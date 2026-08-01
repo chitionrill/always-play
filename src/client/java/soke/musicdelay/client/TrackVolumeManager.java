@@ -72,4 +72,15 @@ public class TrackVolumeManager {
         save();
         return offset;
     }
+
+    // Убирает записи, чей файл (первая часть ключа до "|") больше не существует на диске —
+// вызывается при периодическом сканировании папки с треками, чтобы кэш не рос вечно
+    public static void pruneMissing() {
+        boolean changed = cache.keySet().removeIf(key -> {
+            int sep = key.indexOf('|');
+            String pathPart = sep >= 0 ? key.substring(0, sep) : key;
+            return !Files.exists(Path.of(pathPart));
+        });
+        if (changed) save();
+    }
 }

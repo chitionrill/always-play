@@ -45,6 +45,8 @@ public class CustomTrackManager {
                 tracks.add(file.toPath());
             }
         }
+
+        TrackVolumeManager.pruneMissing(); // новое: заодно вычищаем кэш громкости от удалённых файлов
     }
 
     private boolean isSupported(String fileName) {

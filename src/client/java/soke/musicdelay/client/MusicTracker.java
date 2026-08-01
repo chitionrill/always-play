@@ -31,6 +31,10 @@ public class MusicTracker {
     public boolean canGoBack() { return currentIndex > 0; }
     public boolean canGoForward() { return currentIndex < history.size() - 1; }
 
+    public UnifiedTrack getCurrentTrack() {
+        return currentIndex >= 0 && currentIndex < history.size() ? history.get(currentIndex) : null;
+    }
+
     public UnifiedTrack getPreviousTrack() {
         currentIndex--;
         return history.get(currentIndex);

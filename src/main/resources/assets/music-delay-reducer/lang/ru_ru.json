@@ -47,6 +47,7 @@
   "music-delay-reducer.browser.close": "Закрыть",
   "key.music-delay-reducer.open_browser": "Открыть браузер музыки",
   "key.music-delay-reducer.pause_resume": "Пауза/Возобновить",
+  "key.music-delay-reducer.repeat_one": "Повтор одного трека",
   "music-delay-reducer.playlist.name_title": "Название плейлиста",
   "music-delay-reducer.playlist.name_field": "Название плейлиста",
   "music-delay-reducer.playlist.save": "Сохранить",
@@ -62,8 +63,8 @@
   "music-delay-reducer.confirm.no": "Нет",
   "music-delay-reducer.confirm.delete_playlist_title": "Удалить плейлист?",
   "music-delay-reducer.confirm.delete_playlist_message": "Точно удалить \"%s\"? Это действие нельзя отменить.",
-  "music-delay-reducer.confirm.remove_track_title": "Удалить трек?",
-  "music-delay-reducer.confirm.remove_track_message": "Убрать этот трек из плейлиста?",
   "music-delay-reducer.browser.add_selected": "Добавить выбранные (%s)",
-  "music-delay-reducer.playlist.view": "Просмотр"
+  "music-delay-reducer.playlist.view": "Просмотр",
+  "music-delay-reducer.toast.repeat_on": "Повтор трека: ВКЛ",
+  "music-delay-reducer.toast.repeat_off": "Повтор трека: ВЫКЛ"
 }

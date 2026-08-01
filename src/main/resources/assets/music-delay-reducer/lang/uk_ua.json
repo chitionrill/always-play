@@ -47,6 +47,7 @@
   "music-delay-reducer.browser.close": "Закрити",
   "key.music-delay-reducer.open_browser": "Відкрити браузер музики",
   "key.music-delay-reducer.pause_resume": "Пауза/Відновити",
+  "key.music-delay-reducer.repeat_one": "Повтор одного треку",
   "music-delay-reducer.playlist.name_title": "Назва плейлиста",
   "music-delay-reducer.playlist.name_field": "Назва плейлиста",
   "music-delay-reducer.playlist.save": "Зберегти",
@@ -62,8 +63,8 @@
   "music-delay-reducer.confirm.no": "Ні",
   "music-delay-reducer.confirm.delete_playlist_title": "Видалити плейлист?",
   "music-delay-reducer.confirm.delete_playlist_message": "Точно видалити \"%s\"? Цю дію не можна скасувати.",
-  "music-delay-reducer.confirm.remove_track_title": "Видалити трек?",
-  "music-delay-reducer.confirm.remove_track_message": "Прибрати цей трек з плейлиста?",
   "music-delay-reducer.browser.add_selected": "Додати обрані (%s)",
-  "music-delay-reducer.playlist.view": "Перегляд"
+  "music-delay-reducer.playlist.view": "Перегляд",
+  "music-delay-reducer.toast.repeat_on": "Повтор треку: УВІМК",
+  "music-delay-reducer.toast.repeat_off": "Повтор треку: ВИМК"
 }

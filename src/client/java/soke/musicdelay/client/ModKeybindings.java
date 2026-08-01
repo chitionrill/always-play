@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
+import org.lwjgl.glfw.GLFW;
 
 public class ModKeybindings {
 
@@ -13,6 +14,7 @@ public class ModKeybindings {
     public static KeyMapping volumeDown;
     public static KeyMapping openMusicBrowser;
     public static KeyMapping pauseResume;
+    public static KeyMapping repeatOne;
 
     private static final KeyMapping.Category CATEGORY =
             KeyMapping.Category.register(Identifier.fromNamespaceAndPath("music-delay-reducer", "general"));
@@ -56,7 +58,14 @@ public class ModKeybindings {
         pauseResume = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.pause_resume",
                 InputConstants.Type.KEYSYM,
-                InputConstants.KEY_NUMPAD0,
+                GLFW.GLFW_KEY_KP_0,
+                CATEGORY
+        ));
+
+        repeatOne = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.music-delay-reducer.repeat_one",
+                InputConstants.Type.KEYSYM,
+                GLFW.GLFW_KEY_KP_DECIMAL,
                 CATEGORY
         ));
     }

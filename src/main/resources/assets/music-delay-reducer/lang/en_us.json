@@ -47,6 +47,7 @@
   "music-delay-reducer.browser.close": "Close",
   "key.music-delay-reducer.open_browser": "Open Music Browser",
   "key.music-delay-reducer.pause_resume": "Pause/Resume",
+  "key.music-delay-reducer.repeat_one": "Repeat One",
   "music-delay-reducer.playlist.name_title": "Name Your Playlist",
   "music-delay-reducer.playlist.name_field": "Playlist name",
   "music-delay-reducer.playlist.save": "Save",
@@ -62,8 +63,8 @@
   "music-delay-reducer.confirm.no": "No",
   "music-delay-reducer.confirm.delete_playlist_title": "Delete Playlist?",
   "music-delay-reducer.confirm.delete_playlist_message": "Are you sure you want to delete \"%s\"? This cannot be undone.",
-  "music-delay-reducer.confirm.remove_track_title": "Remove Track?",
-  "music-delay-reducer.confirm.remove_track_message": "Remove this track from the playlist?",
   "music-delay-reducer.browser.add_selected": "Add Selected (%s)",
-  "music-delay-reducer.playlist.view": "View"
+  "music-delay-reducer.playlist.view": "View",
+  "music-delay-reducer.toast.repeat_on": "Repeat One: ON",
+  "music-delay-reducer.toast.repeat_off": "Repeat One: OFF"
 }

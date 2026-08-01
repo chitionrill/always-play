@@ -19,6 +19,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 	private static final Random RANDOM = new Random();
 	private static boolean somethingPlaying = false;
 	private static boolean paused = false; // новое
+	private static boolean repeatOne = false; // новое
 	private static int autoplayCountdown = 0;
 	private static int folderRefreshCountdown = 0;
 	private static Path lastCustomPath = null;
@@ -89,6 +90,14 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				// Замораживаем весь остальной тик: не даём плейлисту/автовоспроизведению
 				// среагировать на "завершение" трека, пока мы стоим на паузе
 				return;
+			}
+			// --- конец нового ---
+
+			// --- новое: повтор одного трека ---
+			if (ModKeybindings.repeatOne.consumeClick()) {
+				repeatOne = !repeatOne;
+				CustomTrackToast.showTrack(net.minecraft.network.chat.Component.translatable(
+						repeatOne ? "music-delay-reducer.toast.repeat_on" : "music-delay-reducer.toast.repeat_off"));
 			}
 			// --- конец нового ---
 
@@ -195,10 +204,14 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 					if (somethingPlaying && !stillPlaying) {
 						somethingPlaying = false;
-						int min = config.minDelaySeconds * 20;
-						int max = Math.max(min + 1, config.maxDelaySeconds * 20);
-						autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
-						plannedPlaylistEntry = null;
+						if (repeatOne) { // новое
+							replayCurrentTrack(mixin);
+						} else {
+							int min = config.minDelaySeconds * 20;
+							int max = Math.max(min + 1, config.maxDelaySeconds * 20);
+							autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
+							plannedPlaylistEntry = null;
+						}
 					}
 
 					if (!somethingPlaying) {
@@ -226,10 +239,14 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 				if (somethingPlaying && !stillPlaying) {
 					somethingPlaying = false;
-					int min = config.minDelaySeconds * 20;
-					int max = Math.max(min + 1, config.maxDelaySeconds * 20);
-					autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
-					plannedAutoplayPath = null;
+					if (repeatOne) { // новое
+						replayCurrentTrack(mixin);
+					} else {
+						int min = config.minDelaySeconds * 20;
+						int max = Math.max(min + 1, config.maxDelaySeconds * 20);
+						autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
+						plannedAutoplayPath = null;
+					}
 				}
 
 				if (!somethingPlaying) {
@@ -263,6 +280,16 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			}
 		}
 		return baseDelayTicks;
+	}
+
+	// Переигрывает текущий трек с начала, не плодя дубликаты в истории —
+// используется для "повтор одного трека"
+	private static void replayCurrentTrack(IMusicManagerMixin mixin) {
+		UnifiedTrack current = MusicTracker.get().getCurrentTrack();
+		if (current == null) return;
+		MusicTracker.get().setNavigating(true);
+		playNewTrack(mixin, current);
+		MusicTracker.get().setNavigating(false);
 	}
 
 	private static void tryPlayNextFromPlaylist(IMusicManagerMixin mixin, Playlist playlist, ModConfig config) {
