@@ -42,6 +42,8 @@ Personally, I just wanted a mod that keeps the music playing constantly, without
 
 ## License
 
-This project is licensed under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)** license. See the [LICENSE](LICENSE) file for details.
+This project's own source code is licensed under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)** license. See the [LICENSE](LICENSE) file for details.
 
 You are free to share and adapt this project for non-commercial purposes, as long as you give appropriate credit and distribute your contributions under the same license.
+
+This mod also bundles a few third-party audio codec libraries (for MP3/OGG/FLAC support) under the **GNU LGPL 2.1**, unmodified. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full list — the CC BY-NC-SA terms above cover this project's own code only, not those libraries.

@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class CustomTrackManager {
 
@@ -16,7 +19,17 @@ public class CustomTrackManager {
 
     private static final String[] SUPPORTED_EXTENSIONS = { ".wav", ".mp3", ".ogg", ".flac" };
 
-    private final List<Path> tracks = new ArrayList<>();
+    private static final ExecutorService SCAN_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "mdr-track-scan");
+        t.setDaemon(true);
+        return t;
+    });
+
+    // volatile — сканирующий поток публикует новый (иммутабельный) список одной атомарной записью,
+    // тик-поток читает его без блокировок. Раньше refresh() делал dir.listFiles() прямо на тик-потоке
+    // каждые 100 тиков — блокирующий диск I/O, который на сетевых дисках/больших папках подвешивал игру.
+    private volatile List<Path> tracks = List.of();
+    private volatile boolean scanning = false;
 
     public static CustomTrackManager get() {
         return INSTANCE;
@@ -34,19 +47,33 @@ public class CustomTrackManager {
         }
     }
 
+    // Асинхронный запуск скана. Если предыдущий скан ещё не закончился — новый не запускаем
+    // (обычное поведение при refresh() каждые 5 секунд с тик-потока), чтобы не плодить очередь задач.
     public void refresh() {
-        tracks.clear();
+        if (scanning) return;
+        scanning = true;
+        SCAN_EXECUTOR.submit(() -> {
+            try {
+                tracks = scanFolder();
+                TrackVolumeManager.pruneMissing(); // заодно вычищаем кэш громкости от удалённых файлов
+            } finally {
+                scanning = false;
+            }
+        });
+    }
+
+    private List<Path> scanFolder() {
         File dir = TRACKS_DIR.toFile();
         File[] files = dir.listFiles();
-        if (files == null) return;
+        if (files == null) return List.of();
 
+        List<Path> found = new ArrayList<>();
         for (File file : files) {
             if (isSupported(file.getName())) {
-                tracks.add(file.toPath());
+                found.add(file.toPath());
             }
         }
-
-        TrackVolumeManager.pruneMissing(); // новое: заодно вычищаем кэш громкости от удалённых файлов
+        return Collections.unmodifiableList(found);
     }
 
     private boolean isSupported(String fileName) {

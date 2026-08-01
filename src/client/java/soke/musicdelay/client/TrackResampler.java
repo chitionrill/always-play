@@ -22,6 +22,13 @@ public class TrackResampler {
         this.readTemp = new byte[2048 * frameBytes];
     }
 
+    // Нужно, чтобы WavPlayer мог закрыть декодер/поток файла, когда TrackState
+    // выбрасывается (трек доигран, снят кроссфейдом или явно остановлен) —
+    // без этого AudioInputStream/файловый хендл утекает.
+    public AudioTrack getTrack() {
+        return track;
+    }
+
     public boolean isFinished() {
         return track.isFinished() && (int) Math.floor(cursor) + 1 >= bufCount;
     }

@@ -8,11 +8,13 @@ import javax.sound.sampled.*;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class WavPlayer {
 
@@ -28,7 +30,7 @@ public class WavPlayer {
 
     private static class TrackState {
         TrackResampler resampler;
-        double offsetDb;
+        volatile double offsetDb; // может обновляться фоновым потоком после старта проигрывания
         long fadeStartNanos;
         long fadeDurationNanos;
         boolean fadingIn;
@@ -38,12 +40,34 @@ public class WavPlayer {
     private static final List<TrackState> outgoing = new ArrayList<>();
     private static final Object lock = new Object();
 
+    private static final int MAX_PRELOADED = 4;
+    private static final Object preloadMapLock = new Object();
+
+    // LRU-кэш прогретых, но ещё не сыгранных треков. Раньше это была обычная
+    // ConcurrentHashMap без ограничения размера — если трек прогревался (например,
+    // как следующий в плейлисте), а потом реально проигран не был (плейлист сменили,
+    // юзер кликнул по другому треку), декодированный AudioTrack оставался висеть в
+    // памяти/на диске (открытый поток) до бесконечности. Теперь при превышении
+    // MAX_PRELOADED самый старый неиспользованный элемент вытесняется и закрывается.
+    private static final Map<Path, CompletableFuture<AudioTrack>> preloadedTracks =
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Path, CompletableFuture<AudioTrack>> eldest) {
+                    boolean evict = size() > MAX_PRELOADED;
+                    if (evict) {
+                        eldest.getValue().thenAccept(track -> {
+                            if (track != null) track.close();
+                        });
+                    }
+                    return evict;
+                }
+            };
+
     private static final ExecutorService PRELOAD_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "mdr-audio-preload");
         t.setDaemon(true);
         return t;
     });
-    private static final Map<Path, java.util.concurrent.CompletableFuture<AudioTrack>> preloadedTracks = new ConcurrentHashMap<>();
 
     private static void init() {
         if (running) return;
@@ -85,10 +109,19 @@ public class WavPlayer {
             Arrays.fill(accum, 0f);
             List<TrackState> toRemove = new ArrayList<>();
 
-            if (currentLocal != null && !currentLocal.resampler.isFinished()) {
-                currentLocal.resampler.fillBlock(blockBuf, BLOCK_FRAMES);
-                float gain = computeGain(currentLocal);
-                for (int i = 0; i < accum.length; i++) accum[i] += blockBuf[i] * gain;
+            if (currentLocal != null) {
+                if (currentLocal.resampler.isFinished()) {
+                    // Трек доиграл сам по себе (не был снят кроссфейдом) — закрываем декодер
+                    // и снимаем ссылку, чтобы не держать открытый файл/поток вхолостую.
+                    synchronized (lock) {
+                        if (current == currentLocal) current = null;
+                    }
+                    closeState(currentLocal);
+                } else {
+                    currentLocal.resampler.fillBlock(blockBuf, BLOCK_FRAMES);
+                    float gain = computeGain(currentLocal);
+                    for (int i = 0; i < accum.length; i++) accum[i] += blockBuf[i] * gain;
+                }
             }
 
             for (TrackState ts : sources) {
@@ -103,6 +136,7 @@ public class WavPlayer {
 
             if (!toRemove.isEmpty()) {
                 synchronized (lock) { outgoing.removeAll(toRemove); }
+                for (TrackState ts : toRemove) closeState(ts);
             }
 
             for (int i = 0; i < accum.length; i++) {
@@ -132,19 +166,24 @@ public class WavPlayer {
     }
 
     public static void preload(Path file) {
-        if (file == null || preloadedTracks.containsKey(file)) return;
-        java.util.concurrent.CompletableFuture<AudioTrack> future = new java.util.concurrent.CompletableFuture<>();
-        preloadedTracks.put(file, future);
+        if (file == null) return;
+        CompletableFuture<AudioTrack> future;
+        synchronized (preloadMapLock) {
+            if (preloadedTracks.containsKey(file)) return;
+            future = new CompletableFuture<>();
+            preloadedTracks.put(file, future);
+        }
+        CompletableFuture<AudioTrack> finalFuture = future;
         PRELOAD_EXECUTOR.submit(() -> {
             try {
                 // Считаем громкость здесь же, в фоновом потоке — если результата ещё нет в кэше,
                 // это самая тяжёлая часть подготовки трека, и делать её на тик-потоке нельзя
                 TrackVolumeManager.getGainOffsetDb(file);
                 AudioTrack t = AudioTrack.open(file);
-                future.complete(t);
+                finalFuture.complete(t);
             } catch (Exception e) {
                 e.printStackTrace();
-                future.completeExceptionally(e);
+                finalFuture.completeExceptionally(e);
             }
         });
     }
@@ -157,11 +196,14 @@ public class WavPlayer {
 // (используется для плавного появления звука при запуске игры)
     public static boolean crossfadeTo(Path file, boolean forceFade, double forceFadeDurationSeconds) {
         init();
-        java.util.concurrent.CompletableFuture<AudioTrack> pending = preloadedTracks.remove(file);
+        CompletableFuture<AudioTrack> pending;
+        synchronized (preloadMapLock) {
+            pending = preloadedTracks.remove(file);
+        }
         AudioTrack track;
         try {
             if (pending != null) {
-                track = pending.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                track = pending.get(5, TimeUnit.SECONDS);
             } else {
                 track = AudioTrack.open(file);
             }
@@ -175,10 +217,25 @@ public class WavPlayer {
 
         TrackState newState = new TrackState();
         newState.resampler = new TrackResampler(track, OUTPUT_SAMPLE_RATE);
-        newState.offsetDb = TrackVolumeManager.getGainOffsetDb(file);
         newState.fadeDurationNanos = fadeNanos;
         newState.fadeStartNanos = System.nanoTime();
         newState.fadingIn = fade;
+
+        // Если громкость трека уже посчитана раньше — это просто чтение из мапы (дёшево).
+        // Если нет — НЕ считаем её здесь синхронно (это полный декод файла и фриз тик-потока),
+        // а стартуем с offsetDb = 0 и досчитываем в фоне, подставляя результат "на лету".
+        if (TrackVolumeManager.isCached(file)) {
+            newState.offsetDb = TrackVolumeManager.getGainOffsetDb(file);
+        } else {
+            newState.offsetDb = 0.0;
+            PRELOAD_EXECUTOR.submit(() -> {
+                try {
+                    newState.offsetDb = TrackVolumeManager.getGainOffsetDb(file);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
 
         synchronized (lock) {
             if (current != null) {
@@ -187,6 +244,10 @@ public class WavPlayer {
                     current.fadeStartNanos = System.nanoTime();
                     current.fadeDurationNanos = fadeNanos;
                     outgoing.add(current);
+                } else {
+                    // Жёсткая смена без кроссфейда — старый трек не идёт в outgoing
+                    // и больше никогда не отрисуется, поэтому закрываем его сразу.
+                    closeState(current);
                 }
             }
             current = newState;
@@ -194,8 +255,16 @@ public class WavPlayer {
         return true;
     }
 
+    private static void closeState(TrackState ts) {
+        if (ts != null) {
+            ts.resampler.getTrack().close();
+        }
+    }
+
     public static void stop() {
         synchronized (lock) {
+            closeState(current);
+            for (TrackState ts : outgoing) closeState(ts);
             current = null;
             outgoing.clear();
         }

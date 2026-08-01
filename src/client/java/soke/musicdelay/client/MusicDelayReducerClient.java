@@ -292,21 +292,6 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		MusicTracker.get().setNavigating(false);
 	}
 
-	private static void tryPlayNextFromPlaylist(IMusicManagerMixin mixin, Playlist playlist, ModConfig config) {
-		int attempts = 0;
-		int maxAttempts = playlist.entries.size() + 1;
-		while (attempts < maxAttempts) {
-			Playlist.PlaylistEntry entry = PlaylistOrderManager.pickNext(playlist, config.trackOrderMode);
-			if (entry == null) return;
-			UnifiedTrack unified = entry.toUnifiedTrack();
-			if (unified != null) {
-				playNewTrack(mixin, unified);
-				return;
-			}
-			attempts++;
-		}
-	}
-
 	// Играет НОВЫЙ (ещё не бывший в истории) трек и записывает его в историю —
 	// используется и обычным автовоспроизведением, и плейлистом
 	private static void playNewTrack(IMusicManagerMixin mixin, UnifiedTrack track) {
