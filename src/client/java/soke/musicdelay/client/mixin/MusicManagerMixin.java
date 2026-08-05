@@ -40,7 +40,7 @@ public abstract class MusicManagerMixin implements IMusicManagerMixin {
 
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void mdr$blockVanillaAutoplay(CallbackInfo ci) {
-        if (soke.musicdelay.client.MusicDelayReducerClient.startupBlocking || !"VANILLA".equals(ModConfig.get().playbackMode)) {
+        if (soke.musicdelay.client.playback.StartupSequencer.isBlocking() || !"VANILLA".equals(ModConfig.get().playbackMode)) {
             ci.cancel();
         }
     }

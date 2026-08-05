@@ -9,6 +9,10 @@ import net.minecraft.client.sounds.MusicManager;
 import net.minecraft.sounds.Music;
 import net.minecraft.sounds.SoundSource;
 import soke.musicdelay.ModConfig;
+import soke.musicdelay.client.playback.StartupSequencer;
+import soke.musicdelay.client.playback.TrackPlaybackService;
+import soke.musicdelay.client.playback.VolumeKeyController;
+import soke.musicdelay.client.playback.PlaybackScheduler;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -16,32 +20,9 @@ import java.util.Random;
 
 public class MusicDelayReducerClient implements ClientModInitializer {
 
-	private static final Random RANDOM = new Random();
-	private static boolean somethingPlaying = false;
 	private static boolean paused = false; // новое
 	private static boolean repeatOne = false; // новое
-	private static int autoplayCountdown = 0;
 	private static int folderRefreshCountdown = 0;
-	private static Path lastCustomPath = null;
-
-	private static Path plannedAutoplayPath = null;
-	private static boolean plannedAutoplayIsVanilla = false;
-
-	public static volatile boolean startupBlocking = true;
-	private static boolean startupInitialized = false;
-	private static int startupCountdown = 0;
-	private static boolean startupHandled = false;
-	private static boolean pendingStartupFade = false;
-
-	private static boolean vanillaStartupFadePending = false;
-	private static long vanillaStartupFadeStartNanos = 0;
-
-	private static int volumeUpHeldTicks = 0;
-	private static int volumeDownHeldTicks = 0;
-	private static Playlist.PlaylistEntry plannedPlaylistEntry = null;
-	private static final int PLAYLIST_MIN_PRELOAD_TICKS = 40; // минимум 2 секунды на подготовку трека
-	private static final int VOLUME_INITIAL_DELAY_TICKS = 8;
-	private static final int VOLUME_REPEAT_INTERVAL_TICKS = 2;
 
 	@Override
 	public void onInitializeClient() {
@@ -60,7 +41,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			WavPlayer.tickVolumeSync();
-			handleVolumeKeys(client);
+			VolumeKeyController.tick(client);
 
 			if (ModKeybindings.openMusicBrowser.consumeClick() && client.level != null && client.gui.screen() == null) {
 				client.gui.setScreen(new MusicBrowserScreen(null));
@@ -107,207 +88,31 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			Playlist activePlaylist = PlaylistManager.getActivePlaylist();
 			boolean playlistMode = activePlaylist != null && !activePlaylist.entries.isEmpty();
 
-			if (!startupHandled) {
-				if (!startupInitialized) {
-					startupInitialized = true;
-					startupCountdown = config.startupFadeEnabled
-							? Math.max(1, config.startupDelaySeconds) * 20
-							: 0;
-					pendingStartupFade = config.startupFadeEnabled;
-				}
-
-				if (startupCountdown > 0) {
-					startupCountdown--;
-					mixin.mdr$stopAndBlock();
-					WavPlayer.stop();
-					return;
-				}
-
-				startupHandled = true;
-				startupBlocking = false;
-
-				if (!playlistMode && "VANILLA".equals(mode)) {
-					mixin.mdr$unblock(1);
-				}
-				vanillaStartupFadePending = pendingStartupFade;
+			if (StartupSequencer.tick(mixin, config, playlistMode, mode)) {
+				return;
 			}
+			StartupSequencer.tickVanillaFade(client, mixin, config);
 
-			if (vanillaStartupFadePending) {
-				if (mixin.mdr$isVanillaActive()) {
-					if (vanillaStartupFadeStartNanos == 0) {
-						vanillaStartupFadeStartNanos = System.nanoTime();
-					}
-					double durationNanos = Math.max(0.1, config.crossfadeDurationSeconds) * 1_000_000_000L;
-					double progress = Math.min(1.0, (System.nanoTime() - vanillaStartupFadeStartNanos) / durationNanos);
-					float sliderVolume = client.options.getSoundSourceVolume(SoundSource.MUSIC);
-					mixin.mdr$setGain((float) (sliderVolume * progress));
-					if (progress >= 1.0) {
-						vanillaStartupFadePending = false;
-						vanillaStartupFadeStartNanos = 0;
-					}
-				}
-			}
-
-			// --- Переключение вперёд/назад работает одинаково и в обычном режиме, и в плейлисте ---
+			// --- Переключение вперёд/назад и автоплей теперь в PlaybackScheduler ---
 			if (ModKeybindings.skipForward.consumeClick()) {
-				tracker.clearPending();
-				if (!"CUSTOM".equals(mode) || playlistMode) mixin.mdr$stopAndBlock();
-
-				if (tracker.canGoForward()) {
-					UnifiedTrack next = tracker.getNextTrack();
-					if (skipDelayTicks <= 0) {
-						playHistoryTrack(mixin, next);
-					} else {
-						WavPlayer.stop();
-						if (next.type == UnifiedTrack.Type.CUSTOM) {
-							WavPlayer.preload(next.customPath);
-						}
-						tracker.setPending(next, skipDelayTicks);
-					}
-				} else if (playlistMode) {
-					WavPlayer.stop();
-					somethingPlaying = false;
-					autoplayCountdown = primePlaylistEntryAndGetDelay(activePlaylist, config, skipDelayTicks);
-				} else if ("VANILLA".equals(mode)) {
-					mixin.mdr$unblock(skipDelayTicks);
-				} else {
-					WavPlayer.stop();
-					somethingPlaying = false;
-					autoplayCountdown = skipDelayTicks;
-					plannedAutoplayPath = null;
-				}
+				PlaybackScheduler.handleSkipForward(mixin, tracker, mode, playlistMode, activePlaylist, config, skipDelayTicks);
 			}
 
-			if (ModKeybindings.skipBackward.consumeClick() && tracker.canGoBack()) {
-				tracker.clearPending();
-				if (!"CUSTOM".equals(mode) || playlistMode) mixin.mdr$stopAndBlock();
-				UnifiedTrack previous = tracker.getPreviousTrack();
-				if (skipDelayTicks <= 0) {
-					playHistoryTrack(mixin, previous);
-				} else {
-					WavPlayer.stop();
-					if (previous.type == UnifiedTrack.Type.CUSTOM) {
-						WavPlayer.preload(previous.customPath);
-					}
-					tracker.setPending(previous, skipDelayTicks);
-				}
+			if (ModKeybindings.skipBackward.consumeClick()) {
+				PlaybackScheduler.handleSkipBackward(mixin, tracker, mode, playlistMode, skipDelayTicks);
 			}
 
-			if (tracker.hasPending() && tracker.tickPending()) {
-				UnifiedTrack pending = tracker.consumePending();
-				playHistoryTrack(mixin, pending);
-			}
+			PlaybackScheduler.tickPending(mixin, tracker);
 
 			if (playlistMode) {
-				if (!tracker.hasPending()) {
-					boolean stillPlaying = WavPlayer.isBusy() || mixin.mdr$isVanillaActive();
-
-					if (somethingPlaying && !stillPlaying) {
-						somethingPlaying = false;
-						if (repeatOne) { // новое
-							replayCurrentTrack(mixin);
-						} else {
-							int min = config.minDelaySeconds * 20;
-							int max = Math.max(min + 1, config.maxDelaySeconds * 20);
-							autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
-							plannedPlaylistEntry = null;
-						}
-					}
-
-					if (!somethingPlaying) {
-						if (plannedPlaylistEntry == null) {
-							int required = primePlaylistEntryAndGetDelay(activePlaylist, config, 0);
-							autoplayCountdown = Math.max(autoplayCountdown, required);
-						}
-
-						if (autoplayCountdown > 0) {
-							autoplayCountdown--;
-						} else if (plannedPlaylistEntry != null) {
-							UnifiedTrack unified = plannedPlaylistEntry.toUnifiedTrack();
-							if (unified != null) {
-								playNewTrack(mixin, unified);
-							}
-							plannedPlaylistEntry = null;
-						}
-					}
-				}
+				PlaybackScheduler.tickPlaylistAutoplay(mixin, tracker, activePlaylist, config, repeatOne);
 				return;
 			}
 
-			if (!"VANILLA".equals(mode) && !tracker.hasPending()) {
-				boolean stillPlaying = WavPlayer.isBusy() || mixin.mdr$isVanillaActive();
-
-				if (somethingPlaying && !stillPlaying) {
-					somethingPlaying = false;
-					if (repeatOne) { // новое
-						replayCurrentTrack(mixin);
-					} else {
-						int min = config.minDelaySeconds * 20;
-						int max = Math.max(min + 1, config.maxDelaySeconds * 20);
-						autoplayCountdown = min + RANDOM.nextInt(max - min + 1);
-						plannedAutoplayPath = null;
-					}
-				}
-
-				if (!somethingPlaying) {
-					if (plannedAutoplayPath == null && !plannedAutoplayIsVanilla) {
-						planNextAutoplay(client, mode);
-					}
-
-					if (autoplayCountdown > 0) {
-						autoplayCountdown--;
-					} else {
-						somethingPlaying = executePlannedAutoplay(client, mixin, mode);
-						plannedAutoplayPath = null;
-						plannedAutoplayIsVanilla = false;
-					}
-				}
+			if (!"VANILLA".equals(mode)) {
+				PlaybackScheduler.tickAutoplay(client, mixin, tracker, config, mode, repeatOne);
 			}
 		});
-	}
-
-	// Выбирает следующий трек плейлиста и решает, сколько реально нужно подождать:
-// 0 (или заданную настройку), если трек уже анализирован раньше, и минимум
-// PLAYLIST_MIN_PRELOAD_TICKS — только если это свежий, ещё не закэшированный файл
-	private static int primePlaylistEntryAndGetDelay(Playlist playlist, ModConfig config, int baseDelayTicks) {
-		Playlist.PlaylistEntry entry = PlaylistOrderManager.pickNext(playlist, config.trackOrderMode);
-		plannedPlaylistEntry = entry;
-		if (entry != null && "CUSTOM".equals(entry.type)) {
-			Path path = Path.of(entry.value);
-			WavPlayer.preload(path);
-			if (!TrackVolumeManager.isCached(path)) {
-				return Math.max(baseDelayTicks, PLAYLIST_MIN_PRELOAD_TICKS);
-			}
-		}
-		return baseDelayTicks;
-	}
-
-	// Переигрывает текущий трек с начала, не плодя дубликаты в истории —
-// используется для "повтор одного трека"
-	private static void replayCurrentTrack(IMusicManagerMixin mixin) {
-		UnifiedTrack current = MusicTracker.get().getCurrentTrack();
-		if (current == null) return;
-		MusicTracker.get().setNavigating(true);
-		playNewTrack(mixin, current);
-		MusicTracker.get().setNavigating(false);
-	}
-
-	// Играет НОВЫЙ (ещё не бывший в истории) трек и записывает его в историю —
-	// используется и обычным автовоспроизведением, и плейлистом
-	private static void playNewTrack(IMusicManagerMixin mixin, UnifiedTrack track) {
-		mixin.mdr$stopAndBlock();
-		if (track.type == UnifiedTrack.Type.CUSTOM) {
-			ModConfig config = ModConfig.get();
-			WavPlayer.crossfadeTo(track.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
-			lastCustomPath = track.customPath;
-			showCustomTrackToast(track.customPath);
-		} else {
-			WavPlayer.stop();
-			mixin.mdr$playFixed(track.vanillaSound);
-			showVanillaTrackToast(track.vanillaSound);
-		}
-		MusicTracker.get().onTrackStarted(track);
-		somethingPlaying = true;
 	}
 
 	// Вызывается при клике "▶" на конкретном треке внутри просмотра плейлиста
@@ -318,78 +123,11 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		PlaylistManager.setActivePlaylist(playlist.id);
 
 		MusicTracker.get().clearPending();
-		autoplayCountdown = 0;
+		PlaybackScheduler.autoplayCountdown = 0;
 
 		Minecraft client = Minecraft.getInstance();
 		IMusicManagerMixin mixin = (IMusicManagerMixin) client.getMusicManager();
-		playNewTrack(mixin, unified);
-	}
-
-	private static void handleVolumeKeys(Minecraft client) {
-		if (ModKeybindings.volumeUp.isDown()) {
-			volumeUpHeldTicks++;
-			if (shouldStep(volumeUpHeldTicks)) {
-				adjustMusicVolume(client, 0.05);
-			}
-		} else {
-			volumeUpHeldTicks = 0;
-		}
-
-		if (ModKeybindings.volumeDown.isDown()) {
-			volumeDownHeldTicks++;
-			if (shouldStep(volumeDownHeldTicks)) {
-				adjustMusicVolume(client, -0.05);
-			}
-		} else {
-			volumeDownHeldTicks = 0;
-		}
-	}
-
-	private static boolean shouldStep(int heldTicks) {
-		if (heldTicks == 1) return true;
-		return heldTicks > VOLUME_INITIAL_DELAY_TICKS
-				&& (heldTicks - VOLUME_INITIAL_DELAY_TICKS) % VOLUME_REPEAT_INTERVAL_TICKS == 0;
-	}
-
-	private static void adjustMusicVolume(Minecraft client, double delta) {
-		OptionInstance<Double> option = client.options.getSoundSourceOptionInstance(SoundSource.MUSIC);
-		double current = option.get();
-		double updated = Math.max(0.0, Math.min(1.0, current + delta));
-		option.set(updated);
-		client.options.save();
-	}
-
-	private static void showCustomTrackToast(Path path) {
-		if (!Minecraft.getInstance().options.musicToast().get().renderToast()) return;
-		String name = path.getFileName().toString();
-		int dot = name.lastIndexOf('.');
-		if (dot > 0) name = name.substring(0, dot);
-		Minecraft.getInstance().gui.toastManager().hideNowPlayingToast();
-		CustomTrackToast.showTrack(net.minecraft.network.chat.Component.literal(name));
-	}
-
-	private static void showVanillaTrackToast(net.minecraft.client.resources.sounds.Sound sound) {
-		if (!Minecraft.getInstance().options.musicToast().get().renderToast()) return;
-		Minecraft.getInstance().gui.toastManager().hideNowPlayingToast();
-		CustomTrackToast.showTrack(VanillaTrackRegistry.getDisplayNameForLocation(sound.getLocation()));
-	}
-
-	private static void playHistoryTrack(IMusicManagerMixin mixin, UnifiedTrack track) {
-		if (track.type == UnifiedTrack.Type.VANILLA) {
-			mixin.mdr$stopAndBlock();
-		}
-		boolean forceFade = consumeStartupFadeFlag();
-		if (track.type == UnifiedTrack.Type.CUSTOM) {
-			ModConfig config = ModConfig.get();
-			WavPlayer.crossfadeTo(track.customPath, forceFade || config.crossfadeEnabled, config.crossfadeDurationSeconds);
-			lastCustomPath = track.customPath;
-			showCustomTrackToast(track.customPath);
-		} else {
-			WavPlayer.stop();
-			mixin.mdr$playFixed(track.vanillaSound);
-			showVanillaTrackToast(track.vanillaSound);
-		}
-		somethingPlaying = true;
+		TrackPlaybackService.playNew(mixin, unified);
 	}
 
 	public static void playFromBrowser(BrowsableTrack track) {
@@ -401,10 +139,10 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		PlaylistManager.setActivePlaylist(null);
 
 		tracker.clearPending();
-		somethingPlaying = true;
-		autoplayCountdown = 0;
-		plannedAutoplayPath = null;
-		plannedAutoplayIsVanilla = false;
+		TrackPlaybackService.playing = true;
+		PlaybackScheduler.autoplayCountdown = 0;
+		PlaybackScheduler.plannedAutoplayPath = null;
+		PlaybackScheduler.plannedAutoplayIsVanilla = false;
 
 		mixin.mdr$stopAndBlock();
 		UnifiedTrack unified = track.toUnifiedTrack();
@@ -412,74 +150,15 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		if (unified.type == UnifiedTrack.Type.CUSTOM) {
 			ModConfig config = ModConfig.get();
 			WavPlayer.crossfadeTo(unified.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
-			lastCustomPath = unified.customPath;
+			TrackPlaybackService.lastCustomPath = unified.customPath;
 			tracker.onTrackStarted(unified);
-			showCustomTrackToast(unified.customPath);
+			TrackPlaybackService.showCustomTrackToast(unified.customPath);
 		} else {
 			WavPlayer.stop();
 			mixin.mdr$playFixed(unified.vanillaSound);
 			tracker.onTrackStarted(unified);
-			showVanillaTrackToast(unified.vanillaSound);
+			TrackPlaybackService.showVanillaTrackToast(unified.vanillaSound);
 		}
-	}
-
-	private static void planNextAutoplay(Minecraft client, String mode) {
-		List<Path> customTracks = CustomTrackManager.get().getTracks();
-		boolean hasCustom = !customTracks.isEmpty();
-		Music situational = client.getSituationalMusic();
-		boolean hasVanilla = situational != null;
-
-		if ("CUSTOM".equals(mode)) {
-			if (!hasCustom) return;
-			Path chosen = pickCustomTrack(customTracks);
-			plannedAutoplayPath = chosen;
-			plannedAutoplayIsVanilla = false;
-			WavPlayer.preload(chosen);
-		} else if ("BOTH".equals(mode)) {
-			boolean pickCustom = hasCustom && (!hasVanilla || RANDOM.nextBoolean());
-			if (pickCustom) {
-				Path chosen = pickCustomTrack(customTracks);
-				plannedAutoplayPath = chosen;
-				plannedAutoplayIsVanilla = false;
-				WavPlayer.preload(chosen);
-			} else if (hasVanilla) {
-				plannedAutoplayIsVanilla = true;
-				plannedAutoplayPath = null;
-			}
-		}
-	}
-
-	private static boolean executePlannedAutoplay(Minecraft client, IMusicManagerMixin mixin, String mode) {
-		boolean forceFade = consumeStartupFadeFlag();
-		if (plannedAutoplayPath != null) {
-			mixin.mdr$stopAndBlock();
-			ModConfig config = ModConfig.get();
-			WavPlayer.crossfadeTo(plannedAutoplayPath, forceFade || config.crossfadeEnabled, config.crossfadeDurationSeconds);
-			lastCustomPath = plannedAutoplayPath;
-			MusicTracker.get().onTrackStarted(UnifiedTrack.ofCustom(plannedAutoplayPath));
-			showCustomTrackToast(plannedAutoplayPath);
-			return true;
-		} else if (plannedAutoplayIsVanilla) {
-			Music situational = client.getSituationalMusic();
-			if (situational != null) {
-				WavPlayer.stop();
-				mixin.mdr$playVanillaRandom(situational);
-				return true;
-			}
-		}
-		return false;
-	}
-
-	private static boolean consumeStartupFadeFlag() {
-		if (pendingStartupFade) {
-			pendingStartupFade = false;
-			return true;
-		}
-		return false;
-	}
-
-	private static Path pickCustomTrack(List<Path> tracks) {
-		return TrackOrderManager.pickNext(tracks, lastCustomPath, ModConfig.get().trackOrderMode);
 	}
 
 	public static void resetPlaybackState() {
@@ -488,31 +167,16 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		IMusicManagerMixin mixin = (IMusicManagerMixin) manager;
 		mixin.mdr$stopAndBlock();
 		MusicTracker.get().clearPending();
-		somethingPlaying = false;
-		plannedAutoplayPath = null;
-		plannedAutoplayIsVanilla = false;
-		TrackOrderManager.reset();
-		PlaylistOrderManager.reset();
-		plannedPlaylistEntry = null;
+		TrackPlaybackService.playing = false;
+		PlaybackScheduler.reset();
 
-		Playlist active = PlaylistManager.getActivePlaylist();
-		if (active != null) {
-			autoplayCountdown = 0; // конкретная задержка решится динамически при выборе первого трека
-		} else {
-			autoplayCountdown = 0;
-			if ("VANILLA".equals(ModConfig.get().playbackMode)) {
-				mixin.mdr$unblock(1);
-			}
+		if (PlaylistManager.getActivePlaylist() == null && "VANILLA".equals(ModConfig.get().playbackMode)) {
+			mixin.mdr$unblock(1);
 		}
 	}
 
 	public static void restartForWorldJoin() {
-		startupInitialized = false;
-		startupHandled = false;
-		startupBlocking = true;
-		pendingStartupFade = false;
-		vanillaStartupFadePending = false;
-		vanillaStartupFadeStartNanos = 0;
+		StartupSequencer.reset();
 		resetPlaybackState();
 	}
 }
