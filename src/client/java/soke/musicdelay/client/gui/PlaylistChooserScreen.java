@@ -1,4 +1,4 @@
-package soke.musicdelay.client;
+package soke.musicdelay.client.gui;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -7,6 +7,10 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
+import soke.musicdelay.client.BrowsableTrack;
+import soke.musicdelay.client.Playlist;
+import soke.musicdelay.client.PlaylistBuilder;
+import soke.musicdelay.client.PlaylistManager;
 
 import java.util.List;
 

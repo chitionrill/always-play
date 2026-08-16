@@ -1,6 +1,7 @@
 package soke.musicdelay.client;
 
 import net.fabricmc.loader.api.FabricLoader;
+import soke.musicdelay.client.musiclibrary.FolderTrackLibrary;
 
 import java.io.File;
 import java.io.IOException;
@@ -97,6 +98,9 @@ public class CustomTrackManager {
             Path target = TRACKS_DIR.resolve(sourceFile.getFileName());
             Files.copy(sourceFile, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             refresh();
+            // Обновляем и дерево вложенных папок — тот же триггер "добавлен трек", что и для
+            // плоского списка выше, чтобы новый файл сразу появился в браузере треков.
+            FolderTrackLibrary.get().rescan(null);
             return true;
         } catch (IOException e) {
             e.printStackTrace();

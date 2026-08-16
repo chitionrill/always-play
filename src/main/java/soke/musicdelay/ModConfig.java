@@ -27,6 +27,11 @@ public class ModConfig {
     public String trackOrderMode = "RANDOM";
     public String activePlaylistId = null;
 
+    // Абсолютный путь к папке, которую игрок выбрал для чтения треков (диалог выбора папки).
+    // null означает "используется только папка мода по умолчанию" — так себя ведёт мод
+    // и для игроков, которые никогда не открывали этот диалог, и для тех, кто на старой версии.
+    public String customTracksFolder = null;
+
     private static ModConfig instance;
 
     public static ModConfig get() {

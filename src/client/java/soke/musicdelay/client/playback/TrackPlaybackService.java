@@ -4,7 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.Sound;
 import net.minecraft.network.chat.Component;
 import soke.musicdelay.ModConfig;
-import soke.musicdelay.client.CustomTrackToast;
+import soke.musicdelay.client.gui.CustomTrackToast;
 import soke.musicdelay.client.IMusicManagerMixin;
 import soke.musicdelay.client.MusicTracker;
 import soke.musicdelay.client.UnifiedTrack;

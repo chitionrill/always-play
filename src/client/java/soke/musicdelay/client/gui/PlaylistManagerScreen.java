@@ -1,4 +1,4 @@
-package soke.musicdelay.client;
+package soke.musicdelay.client.gui;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -7,7 +7,14 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
+import soke.musicdelay.client.MusicDelayReducerClient;
+import soke.musicdelay.client.Playlist;
+import soke.musicdelay.client.PlaylistManager;
+import soke.musicdelay.client.CustomTrackManager;
+import soke.musicdelay.client.musiclibrary.FolderPicker;
+import soke.musicdelay.client.musiclibrary.FolderValidation;
 
+import java.nio.file.Path;
 import java.util.List;
 
 public class PlaylistManagerScreen extends Screen {
@@ -22,9 +29,12 @@ public class PlaylistManagerScreen extends Screen {
 
     @Override
     protected void init() {
-        list = new PlaylistListWidget(this.minecraft, this.width, this.height - 70, 35, 24);
+        list = new PlaylistListWidget(this.minecraft, this.width, this.height - 95, 35, 24);
         refreshList();
         this.addRenderableWidget(list);
+
+        this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.from_folder"), b -> pickPlaylistFolder())
+                .bounds(this.width / 2 - 205, this.height - 55, 200, 20).build());
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.playlist.stop_active"), b -> {
             PlaylistManager.setActivePlaylist(null);
@@ -34,6 +44,22 @@ public class PlaylistManagerScreen extends Screen {
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.browser.close"), b -> this.onClose())
                 .bounds(this.width / 2 + 5, this.height - 30, 200, 20).build());
+    }
+
+    // Открывает нативный диалог выбора папки (в нём же можно и создать новую — это уже
+    // умеет системный диалог сам, отдельный UI для этого не нужен). Пустая папка допустима —
+    // игрок мог только что её создать и планирует докинуть треки позже.
+    private void pickPlaylistFolder() {
+        FolderPicker.pickFolder(CustomTrackManager.get().getTracksFolder(), "Select or create playlist folder", selected -> {
+            if (selected == null) return;
+
+            FolderValidation.Result result = FolderValidation.validate(selected);
+            if (result == FolderValidation.Result.OK || result == FolderValidation.Result.EMPTY) {
+                this.minecraft.gui.setScreen(new PlaylistFolderNameScreen(this, selected));
+            } else {
+                this.minecraft.gui.setScreen(new FolderIssueConfirmScreen(this, result, () -> {}));
+            }
+        });
     }
 
     private void refreshList() {
@@ -101,7 +127,9 @@ public class PlaylistManagerScreen extends Screen {
                             isActive() ? 0x8033AA33 : 0x40FFFFFF);
                 }
 
-                String label = playlist.name + " (" + playlist.entries.size() + ")";
+                String label = playlist.name + " (" + (playlist.isFolderBased()
+                        ? Component.translatable("music-delay-reducer.playlist.folder_based").getString()
+                        : String.valueOf(playlist.entries.size())) + ")";
                 graphics.text(font, Component.literal(label), getContentX() + 4, getContentY() + 6, 0xFFDDDDDD);
 
                 int viewTextWidth = font.width(Component.translatable("music-delay-reducer.playlist.view"));

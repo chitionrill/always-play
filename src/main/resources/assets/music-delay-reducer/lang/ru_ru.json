@@ -24,6 +24,7 @@
   "music-delay-reducer.config.world_restart_toggle.tooltip": "Если включено, при входе в мир всегда запускается новый трек (с задержкой/наплывом старта) вместо продолжения того, что уже играло.",
   "music-delay-reducer.browser.discs_header": "— Музыкальные пластинки —",
   "music-delay-reducer.browser.custom_header": "— Твои треки —",
+  "music-delay-reducer.browser.ambient_header": "— Ванильные треки —",
   "music-delay-reducer.config.order_sequential": "По порядку",
   "music-delay-reducer.config.order_shuffle": "Без повторов",
   "music-delay-reducer.config.order_random": "Случайно",
@@ -66,5 +67,14 @@
   "music-delay-reducer.browser.add_selected": "Добавить выбранные (%s)",
   "music-delay-reducer.playlist.view": "Просмотр",
   "music-delay-reducer.toast.repeat_on": "Повтор трека: ВКЛ",
-  "music-delay-reducer.toast.repeat_off": "Повтор трека: ВЫКЛ"
+  "music-delay-reducer.toast.repeat_off": "Повтор трека: ВЫКЛ",
+  "music-delay-reducer.config.choose_folder": "Выбрать папку",
+  "music-delay-reducer.config.choose_folder.tooltip": "Выбери папку на компьютере, чтобы мод читал треки прямо из неё, без копирования в папку мода.",
+  "music-delay-reducer.config.refresh_tracks": "Обновить",
+  "music-delay-reducer.config.refresh_tracks.tooltip": "Пересканировать папку с треками и выбранную папку на предмет новых или удалённых файлов.",
+  "music-delay-reducer.playlist.from_folder": "Плейлист из папки",
+  "music-delay-reducer.playlist.folder_based": "папка",
+  "music-delay-reducer.folder_issue.title": "Проблема с папкой",
+  "music-delay-reducer.folder_issue.acknowledge": "Понятно",
+  "music-delay-reducer.folder_issue.fallback_notice": "Будет использована папка по умолчанию."
 }

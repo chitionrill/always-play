@@ -14,7 +14,10 @@ public class PlaylistOrderManager {
     private static Playlist.PlaylistEntry lastPicked = null;
 
     public static Playlist.PlaylistEntry pickNext(Playlist playlist, String mode) {
-        List<Playlist.PlaylistEntry> entries = playlist.entries;
+        // Для folder-based плейлиста это пересканирует папку — вызывается только здесь,
+        // раз за переход к следующему треку (а не на каждый тик), так что случайный файл,
+        // докинутый в папку игроком, подхватится сам, без лишней нагрузки на диск.
+        List<Playlist.PlaylistEntry> entries = playlist.resolveEntries();
         if (entries.isEmpty()) return null;
         if (entries.size() == 1) return entries.get(0);
 

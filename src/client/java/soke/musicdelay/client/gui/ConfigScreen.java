@@ -1,4 +1,4 @@
-package soke.musicdelay.client;
+package soke.musicdelay.client.gui;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -12,6 +12,11 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 import soke.musicdelay.ModConfig;
+import soke.musicdelay.client.CustomTrackManager;
+import soke.musicdelay.client.MusicDelayReducerClient;
+import soke.musicdelay.client.musiclibrary.FolderPicker;
+import soke.musicdelay.client.musiclibrary.FolderTrackLibrary;
+import soke.musicdelay.client.musiclibrary.FolderValidation;
 
 import java.nio.file.Path;
 import java.util.Locale;
@@ -29,7 +34,7 @@ public class ConfigScreen extends Screen {
     private static final int CONTENT_TOP = 35;
     private static final int BOTTOM_MARGIN = 10;
     private static final int SCROLL_STEP = 20;
-    private static final int TOTAL_ROWS = 12;
+    private static final int TOTAL_ROWS = 13;
 
     private final @Nullable Screen parent;
     private final ModConfig config;
@@ -190,6 +195,17 @@ public class ConfigScreen extends Screen {
         this.addRenderableWidget(openFolderButton);
         row++;
 
+        Button chooseFolderButton = Button.builder(Component.translatable("music-delay-reducer.config.choose_folder"), b -> pickTracksFolder())
+                .bounds(centerX - 100, rowY(row), 95, 20).build();
+        chooseFolderButton.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.choose_folder.tooltip")));
+        this.addRenderableWidget(chooseFolderButton);
+
+        Button refreshTracksButton = Button.builder(Component.translatable("music-delay-reducer.config.refresh_tracks"), b -> refreshTracks())
+                .bounds(centerX + 5, rowY(row), 95, 20).build();
+        refreshTracksButton.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.refresh_tracks.tooltip")));
+        this.addRenderableWidget(refreshTracksButton);
+        row++;
+
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.config.save"), button -> {
             config.minDelaySeconds = Math.min(minSeconds, maxSeconds);
             config.maxDelaySeconds = Math.max(minSeconds, maxSeconds);
@@ -290,6 +306,32 @@ public class ConfigScreen extends Screen {
     private void openTracksFolder() {
         Path folder = CustomTrackManager.get().getTracksFolder();
         Util.getPlatform().openFile(folder.toFile());
+    }
+
+    // Открывает диалог выбора папки. Если выбранная папка не проходит проверку
+    // (удалена/пуста/недоступна для чтения) — применение отменяется, и игрок видит
+    // модальное окно с причиной, вместо тихого отката на папку по умолчанию.
+    private void pickTracksFolder() {
+        Path initial = FolderTrackLibrary.get().getChosenFolder();
+        if (initial == null) {
+            initial = CustomTrackManager.get().getTracksFolder();
+        }
+        FolderPicker.pickFolder(initial, "Select tracks folder", selected -> {
+            if (selected == null) return; // игрок закрыл диалог без выбора
+
+            FolderValidation.Result result = FolderTrackLibrary.get().applyChosenFolder(selected, null);
+            if (result != FolderValidation.Result.OK) {
+                this.minecraft.gui.setScreen(new FolderIssueConfirmScreen(this, result, () -> {}));
+            }
+        });
+    }
+
+    // Ручное пересканирование по кнопке — обновляет и плоский список кастомных треков,
+    // и дерево вложенных папок. Само сканирование идёт в фоне (см. соответствующие классы),
+    // экран не подвисает на время обращения к диску.
+    private void refreshTracks() {
+        CustomTrackManager.get().refresh();
+        FolderTrackLibrary.get().rescan(null);
     }
 
     @Override

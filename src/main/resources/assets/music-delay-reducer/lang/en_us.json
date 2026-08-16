@@ -24,6 +24,7 @@
   "music-delay-reducer.config.world_restart_toggle.tooltip": "When enabled, entering a world always starts a fresh track (with the startup delay/fade) instead of continuing whatever was already playing.",
   "music-delay-reducer.browser.discs_header": "— Music Discs —",
   "music-delay-reducer.browser.custom_header": "— Your Tracks —",
+  "music-delay-reducer.browser.ambient_header": "— Vanilla Tracks —",
   "music-delay-reducer.config.order_sequential": "In Order",
   "music-delay-reducer.config.order_shuffle": "No Repeat",
   "music-delay-reducer.config.order_random": "Random",
@@ -66,5 +67,14 @@
   "music-delay-reducer.browser.add_selected": "Add Selected (%s)",
   "music-delay-reducer.playlist.view": "View",
   "music-delay-reducer.toast.repeat_on": "Repeat One: ON",
-  "music-delay-reducer.toast.repeat_off": "Repeat One: OFF"
+  "music-delay-reducer.toast.repeat_off": "Repeat One: OFF",
+  "music-delay-reducer.config.choose_folder": "Choose Folder",
+  "music-delay-reducer.config.choose_folder.tooltip": "Pick a folder on your computer to read tracks from directly, without copying them into the mod's folder.",
+  "music-delay-reducer.config.refresh_tracks": "Refresh",
+  "music-delay-reducer.config.refresh_tracks.tooltip": "Rescan the tracks folder and the chosen folder for new or removed files.",
+  "music-delay-reducer.playlist.from_folder": "Playlist From Folder",
+  "music-delay-reducer.playlist.folder_based": "folder",
+  "music-delay-reducer.folder_issue.title": "Folder Problem",
+  "music-delay-reducer.folder_issue.acknowledge": "Got It",
+  "music-delay-reducer.folder_issue.fallback_notice": "The default folder will be used instead."
 }

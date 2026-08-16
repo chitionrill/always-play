@@ -1,4 +1,4 @@
-package soke.musicdelay.client;
+package soke.musicdelay.client.gui;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
