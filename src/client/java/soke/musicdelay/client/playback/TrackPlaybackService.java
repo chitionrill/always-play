@@ -21,12 +21,24 @@ public class TrackPlaybackService {
     public static boolean playing = false;
     public static Path lastCustomPath = null;
 
+    // Сколько ждать молча, если prefetch не успел подготовить трек к моменту переключения —
+    // тот же фиксированный фолбэк, что запрошен изначально ("докручивание трека" без кэша).
+    // Совпадает по масштабу с PlaybackScheduler.PLAYLIST_MIN_PRELOAD_TICKS (2 сек при 20 tps).
+    public static final int CACHE_WAIT_TICKS = 40;
+
     // Играет НОВЫЙ (ещё не бывший в истории) трек и записывает его в историю.
     public static void playNew(IMusicManagerMixin mixin, UnifiedTrack track) {
         mixin.mdr$stopAndBlock();
         if (track.type == UnifiedTrack.Type.CUSTOM) {
             ModConfig config = ModConfig.get();
-            WavPlayer.crossfadeTo(track.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
+            boolean started = WavPlayer.crossfadeTo(track.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
+            if (!started) {
+                // Кэш ещё не готов — WavPlayer.crossfadeTo уже сам поставил(а) preload() в
+                // очередь. Не проигрываем ничего пару тиков вместо блокировки тик-потока;
+                // MusicTracker.pending подхватит и повторит попытку через PlaybackScheduler.tickPending().
+                MusicTracker.get().setPendingNew(track, CACHE_WAIT_TICKS);
+                return;
+            }
             TrackPlaybackService.lastCustomPath = track.customPath;
             TrackPlaybackService.showCustomTrackToast(track.customPath);
         } else {
@@ -42,17 +54,26 @@ public class TrackPlaybackService {
     public static void playHistory(IMusicManagerMixin mixin, UnifiedTrack track) {
         if (track.type == UnifiedTrack.Type.VANILLA) {
             mixin.mdr$stopAndBlock();
-        }
-        boolean forceFade = StartupSequencer.consumeStartupFadeFlag();
-        if (track.type == UnifiedTrack.Type.CUSTOM) {
-            ModConfig config = ModConfig.get();
-            WavPlayer.crossfadeTo(track.customPath, forceFade || config.crossfadeEnabled, config.crossfadeDurationSeconds);
-            TrackPlaybackService.lastCustomPath = track.customPath;
-            TrackPlaybackService.showCustomTrackToast(track.customPath);
-        } else {
+            // Флаг стартового фейда используется только для CUSTOM (передаётся в crossfadeTo),
+            // но раньше консьюмился безусловно на входе — сохраняем это же поведение и здесь,
+            // чтобы не плодить два разных пути потребления флага.
+            StartupSequencer.consumeStartupFadeFlag();
             WavPlayer.stop();
             mixin.mdr$playFixed(track.vanillaSound);
             TrackPlaybackService.showVanillaTrackToast(track.vanillaSound);
+        } else {
+            ModConfig config = ModConfig.get();
+            // peek, а не consume — если crossfadeTo не готов, флаг должен дожить до реальной
+            // успешной попытки (иначе стартовый fade-in потеряется на первом же неудачном ретрае)
+            boolean forceFade = StartupSequencer.peekStartupFadeFlag();
+            boolean started = WavPlayer.crossfadeTo(track.customPath, forceFade || config.crossfadeEnabled, config.crossfadeDurationSeconds);
+            if (!started) {
+                MusicTracker.get().setPending(track, CACHE_WAIT_TICKS);
+                return;
+            }
+            StartupSequencer.consumeStartupFadeFlag();
+            TrackPlaybackService.lastCustomPath = track.customPath;
+            TrackPlaybackService.showCustomTrackToast(track.customPath);
         }
         playing = true;
     }

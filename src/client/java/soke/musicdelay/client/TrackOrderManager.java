@@ -55,6 +55,63 @@ public class TrackOrderManager {
         }
     }
 
+    // Предсказывает следующие count треков, НЕ трогая реальное состояние (sequentialIndex,
+    // shuffleBag) — нужно для prefetch, чтобы заглянуть вперёд, не сбивая порядок, который
+    // увидит настоящий pickNext(), когда до этих треков дойдёт очередь.
+    // Для режима RANDOM результат приблизительный (реальный вызов использует свежий RANDOM),
+    // но это ок для целей prefetch — трек либо пригодится, либо будет просто вытеснен из кэша.
+    public static List<Path> peekNext(List<Path> tracks, Path lastPlayed, String mode, int count) {
+        List<Path> result = new ArrayList<>();
+        if (tracks.isEmpty() || count <= 0) return result;
+
+        List<Path> sorted = new ArrayList<>(tracks);
+        sorted.sort((a, b) -> a.getFileName().toString().compareToIgnoreCase(b.getFileName().toString()));
+
+        if (sorted.size() == 1) {
+            for (int i = 0; i < count; i++) result.add(sorted.get(0));
+            return result;
+        }
+
+        boolean listChanged = !sorted.equals(lastKnownTracks);
+        int simSequentialIndex = listChanged ? 0 : sequentialIndex;
+        List<Path> simShuffleBag = listChanged ? new ArrayList<>() : new ArrayList<>(shuffleBag);
+        Path simLastPicked = lastPlayed;
+
+        for (int i = 0; i < count; i++) {
+            Path chosen;
+            switch (mode) {
+                case "SEQUENTIAL": {
+                    chosen = sorted.get(simSequentialIndex % sorted.size());
+                    simSequentialIndex = (simSequentialIndex + 1) % sorted.size();
+                    break;
+                }
+                case "SHUFFLE_NO_REPEAT": {
+                    if (simShuffleBag.isEmpty()) {
+                        simShuffleBag.addAll(sorted);
+                        Collections.shuffle(simShuffleBag, RANDOM);
+                        if (simLastPicked != null && simShuffleBag.get(0).equals(simLastPicked) && simShuffleBag.size() > 1) {
+                            Collections.swap(simShuffleBag, 0, 1);
+                        }
+                    }
+                    chosen = simShuffleBag.remove(0);
+                    break;
+                }
+                default: {
+                    Path candidate;
+                    int attempts = 0;
+                    do {
+                        candidate = sorted.get(RANDOM.nextInt(sorted.size()));
+                        attempts++;
+                    } while (candidate.equals(simLastPicked) && attempts < 10);
+                    chosen = candidate;
+                }
+            }
+            result.add(chosen);
+            simLastPicked = chosen;
+        }
+        return result;
+    }
+
     public static void reset() {
         sequentialIndex = 0;
         shuffleBag.clear();

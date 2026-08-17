@@ -11,9 +11,6 @@ import soke.musicdelay.client.TrackOrderManager;
 import soke.musicdelay.client.TrackVolumeManager;
 import soke.musicdelay.client.UnifiedTrack;
 import soke.musicdelay.client.WavPlayer;
-import soke.musicdelay.client.musiclibrary.FolderTrackLibrary;
-import soke.musicdelay.client.musiclibrary.TrackEntry;
-import soke.musicdelay.client.musiclibrary.TrackGroup;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -83,13 +80,22 @@ public class PlaybackScheduler {
 
     public static void tickPending(IMusicManagerMixin mixin, MusicTracker tracker) {
         if (tracker.hasPending() && tracker.tickPending()) {
+            boolean isNew = tracker.isPendingNew();
             UnifiedTrack pending = tracker.consumePending();
-            TrackPlaybackService.playHistory(mixin, pending);
+            if (isNew) {
+                TrackPlaybackService.playNew(mixin, pending);
+            } else {
+                TrackPlaybackService.playHistory(mixin, pending);
+            }
         }
     }
 
     public static void tickAutoplay(Minecraft client, IMusicManagerMixin mixin, MusicTracker tracker,
                                     ModConfig config, String mode, boolean repeatOne) {
+        // Раньше эта проверка тут отсутствовала (была только в tickPlaylistAutoplay) — не было
+        // нужды, потому что crossfadeTo() внутри executePlannedAutoplay блокировался до готовности
+        // кэша. Теперь crossfadeTo() неблокирующий и может выставить pending сам — если не
+        // остановиться здесь, tickAutoplay продолжит планировать новые треки поверх ожидающего.
         if (tracker.hasPending()) return;
 
         boolean stillPlaying = WavPlayer.isBusy() || mixin.mdr$isVanillaActive();
@@ -179,7 +185,7 @@ public class PlaybackScheduler {
     }
 
     private static void planNextAutoplay(Minecraft client, String mode) {
-        List<Path> customTracks = collectAllCustomTracks();
+        List<Path> customTracks = QueuePlanner.collectAllCustomTracks();
         boolean hasCustom = !customTracks.isEmpty();
         Music situational = client.getSituationalMusic();
         boolean hasVanilla = situational != null;
@@ -204,32 +210,29 @@ public class PlaybackScheduler {
         }
     }
 
-    // Пул для автоплея в режимах CUSTOM/BOTH: папка мода по умолчанию + выбранная игроком
-    // папка (если задана) + все их подпапки — то же дерево, что показывает браузер. Раньше
-    // здесь была только CustomTrackManager.get().getTracks() (плоский список, одна папка),
-    // из-за чего трек, запущенный вручную из выбранной папки или подпапки, после доигрывания
-    // "терял" свою папку и автоплей скатывался обратно к папке по умолчанию.
-    private static List<Path> collectAllCustomTracks() {
-        List<Path> all = new ArrayList<>();
-        for (TrackGroup group : FolderTrackLibrary.get().library().getTopLevelGroups()) {
-            for (TrackEntry entry : group.collectAllTracks()) {
-                all.add(entry.filePath());
-            }
-        }
-        return all;
-    }
-
     private static boolean executePlannedAutoplay(Minecraft client, IMusicManagerMixin mixin) {
-        boolean forceFade = StartupSequencer.consumeStartupFadeFlag();
         if (plannedAutoplayPath != null) {
             mixin.mdr$stopAndBlock();
+            // peek, а не consume — если crossfadeTo не готов, флаг должен дожить до реальной
+            // успешной попытки (тот же приём, что и в TrackPlaybackService.playHistory)
+            boolean forceFade = StartupSequencer.peekStartupFadeFlag();
             ModConfig config = ModConfig.get();
-            WavPlayer.crossfadeTo(plannedAutoplayPath, forceFade || config.crossfadeEnabled, config.crossfadeDurationSeconds);
+            boolean started = WavPlayer.crossfadeTo(plannedAutoplayPath, forceFade || config.crossfadeEnabled, config.crossfadeDurationSeconds);
+            if (!started) {
+                // Кэш не успел подготовиться — не считаем автоплей выполненным, отдаём треку
+                // короткую догрузку через тот же pending-механизм, что у ручного скипа.
+                // plannedAutoplayPath ниже в tickAutoplay всё равно сбросится в null — это ок,
+                // трек уже сохранён внутри pending и будет доигран через tickPending().
+                MusicTracker.get().setPendingNew(UnifiedTrack.ofCustom(plannedAutoplayPath), TrackPlaybackService.CACHE_WAIT_TICKS);
+                return false;
+            }
+            StartupSequencer.consumeStartupFadeFlag();
             TrackPlaybackService.lastCustomPath = plannedAutoplayPath;
             MusicTracker.get().onTrackStarted(UnifiedTrack.ofCustom(plannedAutoplayPath));
             TrackPlaybackService.showCustomTrackToast(plannedAutoplayPath);
             return true;
         } else if (plannedAutoplayIsVanilla) {
+            StartupSequencer.consumeStartupFadeFlag(); // как и раньше — консьюмится безусловно, хоть здесь и не используется
             Music situational = client.getSituationalMusic();
             if (situational != null) {
                 WavPlayer.stop();
@@ -244,6 +247,31 @@ public class PlaybackScheduler {
         return TrackOrderManager.pickNext(tracks, TrackPlaybackService.lastCustomPath, ModConfig.get().trackOrderMode);
     }
 
+    // Единая точка входа для prefetch-системы — безопасно звать каждый тик, реально
+    // пересчитывает окно только когда изменилось что-то существенное для предсказания
+    // (текущий трек, режим, плейлист, наличие pending-догрузки). Это даёт реакцию на все
+    // события разом (skip, обычное докручивание, смена плейлиста/режима), не требуя
+    // отдельного вызова refresh() из каждого места, где меняется трек — и не пересканирует
+    // на пустом месте folder-based плейлист каждый тик (PlaylistOrderManager.peekNext дергает
+    // Playlist.resolveEntries(), что при неизменном ключе просто не будет вызвано лишний раз).
+    private static Object lastPreloadTriggerKey = null;
+
+    public static void tickPreload(MusicTracker tracker, boolean playlistMode, Playlist activePlaylist, String mode) {
+        UnifiedTrack current = tracker.getCurrentTrack();
+        Path currentCustomPath = (current != null && current.type == UnifiedTrack.Type.CUSTOM) ? current.customPath : null;
+
+        List<Object> key = new ArrayList<>();
+        key.add(currentCustomPath);
+        key.add(playlistMode);
+        key.add(activePlaylist != null ? activePlaylist.id : null);
+        key.add(mode);
+        key.add(tracker.hasPending());
+
+        if (key.equals(lastPreloadTriggerKey)) return;
+        lastPreloadTriggerKey = key;
+        TrackPreloadManager.refresh(tracker, playlistMode, activePlaylist, mode);
+    }
+
     public static void reset() {
         autoplayCountdown = 0;
         plannedAutoplayPath = null;
@@ -251,5 +279,7 @@ public class PlaybackScheduler {
         plannedPlaylistEntry = null;
         TrackOrderManager.reset();
         PlaylistOrderManager.reset();
+        TrackPreloadManager.reset();
+        lastPreloadTriggerKey = null;
     }
 }

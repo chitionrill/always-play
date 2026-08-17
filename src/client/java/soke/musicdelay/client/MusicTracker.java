@@ -13,6 +13,10 @@ public class MusicTracker {
 
     private UnifiedTrack pendingTrack = null;
     private int pendingCountdown = 0;
+    // Отличает "трек ждёт короткую догрузку кэша, но это НЕ история" (обычный/плейлист
+    // автоплей) от обычного skip-forward/backward pending — нужно, чтобы tickPending()
+    // знал, звать ли playNew() (запишет в историю) или playHistory() (не запишет повторно).
+    private boolean pendingIsNew = false;
 
     public static MusicTracker get() { return INSTANCE; }
 
@@ -45,19 +49,45 @@ public class MusicTracker {
         return history.get(currentIndex);
     }
 
+    // Read-only заглядывание вперёд по уже существующей истории (Previous->Next случай),
+    // не трогает currentIndex. Возвращает меньше count элементов, если история закончилась —
+    // остаток должен предсказать QueuePlanner через order manager'ы.
+    public List<UnifiedTrack> peekForwardHistory(int count) {
+        List<UnifiedTrack> result = new ArrayList<>();
+        int idx = currentIndex + 1;
+        while (result.size() < count && idx < history.size()) {
+            result.add(history.get(idx));
+            idx++;
+        }
+        return result;
+    }
+
     public void setNavigating(boolean v) { navigating = v; }
     public boolean isNavigating() { return navigating; }
 
     public void setPending(UnifiedTrack track, int ticks) {
         pendingTrack = track;
         pendingCountdown = ticks;
+        pendingIsNew = false;
     }
+
+    // Тот же механизм короткой догрузки кэша, но для треков, которые ещё НЕ в истории
+    // (обычный автоплей / плейлист-автоплей / повторный запуск текущего) — при консьюме
+    // должен пойти через playNew(), а не playHistory().
+    public void setPendingNew(UnifiedTrack track, int ticks) {
+        pendingTrack = track;
+        pendingCountdown = ticks;
+        pendingIsNew = true;
+    }
+
+    public boolean isPendingNew() { return pendingIsNew; }
 
     public boolean hasPending() { return pendingTrack != null; }
 
     public void clearPending() {
         pendingTrack = null;
         pendingCountdown = 0;
+        pendingIsNew = false;
     }
 
     public boolean tickPending() {

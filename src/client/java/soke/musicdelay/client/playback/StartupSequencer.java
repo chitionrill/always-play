@@ -75,6 +75,12 @@ public class StartupSequencer {
         return false;
     }
 
+    // Не потребляет флаг — нужно, когда попытка воспроизведения может не удаться
+    // (кэш ещё не готов) и флаг должен дожить до реальной успешной попытки.
+    public static boolean peekStartupFadeFlag() {
+        return pendingStartupFade;
+    }
+
     public static boolean isBlocking() {
         return startupBlocking;
     }

@@ -55,6 +55,62 @@ public class PlaylistOrderManager {
         return chosen;
     }
 
+    // Предсказывает следующие count записей плейлиста, НЕ трогая реальное состояние
+    // (sequentialIndex, shuffleBag, lastPicked) — используется для prefetch.
+    // Как и у TrackOrderManager, для RANDOM результат приблизительный, что для целей
+    // предзагрузки не критично.
+    public static List<Playlist.PlaylistEntry> peekNext(Playlist playlist, String mode, int count) {
+        List<Playlist.PlaylistEntry> result = new ArrayList<>();
+        if (count <= 0) return result;
+
+        List<Playlist.PlaylistEntry> entries = playlist.resolveEntries();
+        if (entries.isEmpty()) return result;
+
+        if (entries.size() == 1) {
+            for (int i = 0; i < count; i++) result.add(entries.get(0));
+            return result;
+        }
+
+        boolean playlistChanged = !playlist.id.equals(lastKnownPlaylistId);
+        int simSequentialIndex = playlistChanged ? 0 : sequentialIndex;
+        List<Playlist.PlaylistEntry> simShuffleBag = playlistChanged ? new ArrayList<>() : new ArrayList<>(shuffleBag);
+        Playlist.PlaylistEntry simLastPicked = playlistChanged ? null : lastPicked;
+
+        for (int i = 0; i < count; i++) {
+            Playlist.PlaylistEntry chosen;
+            switch (mode) {
+                case "SEQUENTIAL": {
+                    chosen = entries.get(simSequentialIndex % entries.size());
+                    simSequentialIndex = (simSequentialIndex + 1) % entries.size();
+                    break;
+                }
+                case "SHUFFLE_NO_REPEAT": {
+                    if (simShuffleBag.isEmpty()) {
+                        simShuffleBag.addAll(entries);
+                        Collections.shuffle(simShuffleBag, RANDOM);
+                        if (simLastPicked != null && simShuffleBag.get(0).equals(simLastPicked) && simShuffleBag.size() > 1) {
+                            Collections.swap(simShuffleBag, 0, 1);
+                        }
+                    }
+                    chosen = simShuffleBag.remove(0);
+                    break;
+                }
+                default: {
+                    Playlist.PlaylistEntry candidate;
+                    int attempts = 0;
+                    do {
+                        candidate = entries.get(RANDOM.nextInt(entries.size()));
+                        attempts++;
+                    } while (candidate.equals(simLastPicked) && attempts < 10);
+                    chosen = candidate;
+                }
+            }
+            result.add(chosen);
+            simLastPicked = chosen;
+        }
+        return result;
+    }
+
     public static void reset() {
         lastKnownPlaylistId = null;
         sequentialIndex = 0;

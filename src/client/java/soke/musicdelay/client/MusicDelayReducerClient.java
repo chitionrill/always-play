@@ -104,6 +104,11 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 			PlaybackScheduler.tickPending(mixin, tracker);
 
+			// Prefetch-система: считает окно наперёд и просит WavPlayer прогреть/отменить
+			// нужные треки. Само throttling по ключу состояния внутри tickPreload — здесь
+			// не нужно думать, когда именно вызывать, безопасно каждый тик.
+			PlaybackScheduler.tickPreload(tracker, playlistMode, activePlaylist, mode);
+
 			if (playlistMode) {
 				PlaybackScheduler.tickPlaylistAutoplay(mixin, tracker, activePlaylist, config, repeatOne);
 				return;
@@ -139,26 +144,16 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		PlaylistManager.setActivePlaylist(null);
 
 		tracker.clearPending();
-		TrackPlaybackService.playing = true;
 		PlaybackScheduler.autoplayCountdown = 0;
 		PlaybackScheduler.plannedAutoplayPath = null;
 		PlaybackScheduler.plannedAutoplayIsVanilla = false;
 
-		mixin.mdr$stopAndBlock();
+		// Раньше здесь была своя копия логики crossfadeTo с "playing = true" выставленным
+		// заранее и без проверки результата — тот же класс бага, что и freeze при ручном
+		// скипе (см. TrackPlaybackService), только для клика по треку в браузере. playNew()
+		// уже умеет корректно откладывать старт на пару тиков, если кэш ещё не прогрелся.
 		UnifiedTrack unified = track.toUnifiedTrack();
-
-		if (unified.type == UnifiedTrack.Type.CUSTOM) {
-			ModConfig config = ModConfig.get();
-			WavPlayer.crossfadeTo(unified.customPath, config.crossfadeEnabled, config.crossfadeDurationSeconds);
-			TrackPlaybackService.lastCustomPath = unified.customPath;
-			tracker.onTrackStarted(unified);
-			TrackPlaybackService.showCustomTrackToast(unified.customPath);
-		} else {
-			WavPlayer.stop();
-			mixin.mdr$playFixed(unified.vanillaSound);
-			tracker.onTrackStarted(unified);
-			TrackPlaybackService.showVanillaTrackToast(unified.vanillaSound);
-		}
+		TrackPlaybackService.playNew(mixin, unified);
 	}
 
 	public static void resetPlaybackState() {

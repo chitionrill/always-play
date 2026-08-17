@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Future;
 
 public class WavPlayer {
 
@@ -40,7 +40,10 @@ public class WavPlayer {
     private static final List<TrackState> outgoing = new ArrayList<>();
     private static final Object lock = new Object();
 
-    private static final int MAX_PRELOADED = 4;
+    // Раньше было 4 — этого хватало на "один трек вперёд". Теперь TrackPreloadManager держит
+    // прогретым окно до TrackPreloadManager.WINDOW треков вперёд + немного запаса на случай,
+    // пока старое ещё не вытеснилось, новое уже добавляется.
+    private static final int MAX_PRELOADED = 16;
     private static final Object preloadMapLock = new Object();
 
     // LRU-кэш прогретых, но ещё не сыгранных треков. Раньше это была обычная
@@ -58,10 +61,17 @@ public class WavPlayer {
                         eldest.getValue().thenAccept(track -> {
                             if (track != null) track.close();
                         });
+                        preloadTasks.remove(eldest.getKey());
                     }
                     return evict;
                 }
             };
+
+    // Параллельно preloadedTracks храним сами Future от submit() в executor — нужно,
+    // чтобы уметь отменять ещё НЕ начавшуюся задачу (single-thread executor, значит задачи,
+    // стоящие в очереди после текущей, реально можно снять без траты CPU). Используется
+    // TrackPreloadManager при spam-скипе/изменении очереди, когда трек вышел из окна prefetch.
+    private static final Map<Path, Future<?>> preloadTasks = new java.util.HashMap<>();
 
     private static final ExecutorService PRELOAD_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "mdr-audio-preload");
@@ -174,7 +184,7 @@ public class WavPlayer {
             preloadedTracks.put(file, future);
         }
         CompletableFuture<AudioTrack> finalFuture = future;
-        PRELOAD_EXECUTOR.submit(() -> {
+        Future<?> task = PRELOAD_EXECUTOR.submit(() -> {
             try {
                 // Считаем громкость здесь же, в фоновом потоке — если результата ещё нет в кэше,
                 // это самая тяжёлая часть подготовки трека, и делать её на тик-потоке нельзя
@@ -184,8 +194,49 @@ public class WavPlayer {
             } catch (Exception e) {
                 e.printStackTrace();
                 finalFuture.completeExceptionally(e);
+            } finally {
+                synchronized (preloadMapLock) {
+                    preloadTasks.remove(file);
+                }
             }
         });
+        synchronized (preloadMapLock) {
+            // Если crossfadeTo() успел забрать трек из preloadedTracks, пока мы были здесь —
+            // не держим ссылку на задачу, которая уже никому не принадлежит
+            if (preloadedTracks.containsKey(file)) {
+                preloadTasks.put(file, task);
+            }
+        }
+    }
+
+    // Не готов ли трек к МГНОВЕННОМУ воспроизведению прямо сейчас — не блокирует поток.
+    public static boolean isReady(Path file) {
+        synchronized (preloadMapLock) {
+            CompletableFuture<AudioTrack> f = preloadedTracks.get(file);
+            return f != null && f.isDone() && !f.isCompletedExceptionally();
+        }
+    }
+
+    // Снимает трек из окна prefetch, если он туда больше не входит (spam-скип, смена очереди).
+    // Если фоновая задача ещё не стартовала — реально экономит CPU, отменяя её.
+    // Если уже выполняется — доработает вхолостую (дёшево: open()+RMS одного файла),
+    // результат просто останется невостребованным и будет вытеснен LRU.
+    public static void cancelPreload(Path file) {
+        if (file == null) return;
+        CompletableFuture<AudioTrack> removedFuture;
+        Future<?> task;
+        synchronized (preloadMapLock) {
+            removedFuture = preloadedTracks.remove(file);
+            task = preloadTasks.remove(file);
+        }
+        if (task != null) {
+            task.cancel(false);
+        }
+        if (removedFuture != null) {
+            removedFuture.thenAccept(track -> {
+                if (track != null) track.close();
+            });
+        }
     }
 
     public static boolean crossfadeTo(Path file) {
@@ -196,19 +247,28 @@ public class WavPlayer {
 // (используется для плавного появления звука при запуске игры)
     public static boolean crossfadeTo(Path file, boolean forceFade, double forceFadeDurationSeconds) {
         init();
-        CompletableFuture<AudioTrack> pending;
-        synchronized (preloadMapLock) {
-            pending = preloadedTracks.remove(file);
-        }
+
         AudioTrack track;
-        try {
-            if (pending != null) {
-                track = pending.get(5, TimeUnit.SECONDS);
+        synchronized (preloadMapLock) {
+            CompletableFuture<AudioTrack> pending = preloadedTracks.get(file);
+            if (pending != null && pending.isDone() && !pending.isCompletedExceptionally()) {
+                // Готов — забираем немедленно, join() тут не блокирует, т.к. future уже done
+                preloadedTracks.remove(file);
+                preloadTasks.remove(file);
+                track = pending.join();
             } else {
-                track = AudioTrack.open(file);
+                // Не готов (либо ещё готовится, либо вообще не запрашивался) — НЕ ждём и
+                // не открываем файл синхронно на вызывающем (тик) потоке. Раньше здесь был
+                // pending.get(5, SECONDS) — блокировка до 5 секунд, из-за которой ручной скип
+                // фризил игру, если prefetch не успевал. Вместо этого просто просим подготовить
+                // (no-op, если уже готовится) и возвращаем false — вызывающий код (TrackPlaybackService)
+                // должен на false уйти в тот же short-wait путь, что и обычное докручивание трека.
+                track = null;
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        }
+
+        if (track == null) {
+            preload(file); // no-op если уже в процессе
             return false;
         }
 
