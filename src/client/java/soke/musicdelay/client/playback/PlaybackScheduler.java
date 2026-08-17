@@ -3,7 +3,6 @@ package soke.musicdelay.client.playback;
 import net.minecraft.client.Minecraft;
 import net.minecraft.sounds.Music;
 import soke.musicdelay.ModConfig;
-import soke.musicdelay.client.CustomTrackManager;
 import soke.musicdelay.client.IMusicManagerMixin;
 import soke.musicdelay.client.MusicTracker;
 import soke.musicdelay.client.Playlist;
@@ -12,8 +11,12 @@ import soke.musicdelay.client.TrackOrderManager;
 import soke.musicdelay.client.TrackVolumeManager;
 import soke.musicdelay.client.UnifiedTrack;
 import soke.musicdelay.client.WavPlayer;
+import soke.musicdelay.client.musiclibrary.FolderTrackLibrary;
+import soke.musicdelay.client.musiclibrary.TrackEntry;
+import soke.musicdelay.client.musiclibrary.TrackGroup;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -176,7 +179,7 @@ public class PlaybackScheduler {
     }
 
     private static void planNextAutoplay(Minecraft client, String mode) {
-        List<Path> customTracks = CustomTrackManager.get().getTracks();
+        List<Path> customTracks = collectAllCustomTracks();
         boolean hasCustom = !customTracks.isEmpty();
         Music situational = client.getSituationalMusic();
         boolean hasVanilla = situational != null;
@@ -199,6 +202,21 @@ public class PlaybackScheduler {
                 plannedAutoplayPath = null;
             }
         }
+    }
+
+    // Пул для автоплея в режимах CUSTOM/BOTH: папка мода по умолчанию + выбранная игроком
+    // папка (если задана) + все их подпапки — то же дерево, что показывает браузер. Раньше
+    // здесь была только CustomTrackManager.get().getTracks() (плоский список, одна папка),
+    // из-за чего трек, запущенный вручную из выбранной папки или подпапки, после доигрывания
+    // "терял" свою папку и автоплей скатывался обратно к папке по умолчанию.
+    private static List<Path> collectAllCustomTracks() {
+        List<Path> all = new ArrayList<>();
+        for (TrackGroup group : FolderTrackLibrary.get().library().getTopLevelGroups()) {
+            for (TrackEntry entry : group.collectAllTracks()) {
+                all.add(entry.filePath());
+            }
+        }
+        return all;
     }
 
     private static boolean executePlannedAutoplay(Minecraft client, IMusicManagerMixin mixin) {

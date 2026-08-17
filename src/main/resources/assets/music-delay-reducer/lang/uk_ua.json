@@ -76,5 +76,7 @@
   "music-delay-reducer.playlist.folder_based": "папка",
   "music-delay-reducer.folder_issue.title": "Проблема з папкою",
   "music-delay-reducer.folder_issue.acknowledge": "Зрозуміло",
-  "music-delay-reducer.folder_issue.fallback_notice": "Буде використано папку за замовчуванням."
+  "music-delay-reducer.folder_issue.fallback_notice": "Буде використано папку за замовчуванням.",
+  "music-delay-reducer.browser.refresh.tooltip": "Пересканувати папку з треками та обрану папку на предмет нових або видалених файлів.",
+  "music-delay-reducer.browser.refresh": "Оновити"
 }

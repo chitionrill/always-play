@@ -1,12 +1,15 @@
 package soke.musicdelay.client.gui;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.jspecify.annotations.Nullable;
 import soke.musicdelay.client.BrowsableTrack;
+import soke.musicdelay.client.CustomTrackManager;
 import soke.musicdelay.client.MusicDelayReducerClient;
 import soke.musicdelay.client.PlaylistBuilder;
 import soke.musicdelay.client.musiclibrary.BrowserTrackFilter;
@@ -53,11 +56,16 @@ public class MusicBrowserScreen extends Screen implements TrackRowCallbacks {
         allTracks = BrowsableTrack.buildFullList();
         int centerX = this.width / 2;
 
-        searchBox = new EditBox(this.font, centerX - 100, 35, 200, 20, Component.translatable("music-delay-reducer.browser.search"));
+        searchBox = new EditBox(this.font, centerX - 100, 35, 130, 20, Component.translatable("music-delay-reducer.browser.search"));
         searchBox.setHint(Component.translatable("music-delay-reducer.browser.search"));
         searchBox.setValue(savedQuery);
         searchBox.setResponder(this::applyFilter);
         this.addRenderableWidget(searchBox);
+
+        Button refreshButton = Button.builder(Component.translatable("music-delay-reducer.browser.refresh"), b -> refreshTracks())
+                .bounds(centerX + 35, 35, 65, 20).build();
+        refreshButton.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.browser.refresh.tooltip")));
+        this.addRenderableWidget(refreshButton);
 
         addSelectedButton = Button.builder(Component.literal(""), b -> onAddSelectedClicked())
                 .bounds(centerX - 100, 60, 200, 20).build();
@@ -67,6 +75,14 @@ public class MusicBrowserScreen extends Screen implements TrackRowCallbacks {
         this.addRenderableWidget(trackList);
         applyFilter(savedQuery);
         trackList.setScrollAmount(savedScrollAmount);
+
+        // Дерево папок сканируется только по явным триггерам (добавлен трек, выбрана папка,
+        // нажата "Обновить") — при обычном открытии браузера ничего из этого могло ещё не
+        // происходить, и список источников остаётся пустым. Поэтому сканируем и здесь тоже:
+        // список сразу отрисовался (пусть даже без папок на первый кадр), а через мгновение,
+        // когда фоновое сканирование закончится, применяется свежий результат.
+        FolderTrackLibrary.get().rescan(() ->
+                Minecraft.getInstance().execute(() -> applyFilter(searchBox.getValue())));
 
         if (searchBox.getValue().isEmpty()) {
             this.setInitialFocus(searchBox);
@@ -95,6 +111,15 @@ public class MusicBrowserScreen extends Screen implements TrackRowCallbacks {
         List<BrowsableTrack> filtered = BrowserTrackFilter.filter(
                 allTracks, FolderTrackLibrary.get().library().getTopLevelGroups(), rawQuery, collapsedHeaders);
         trackList.setEntries(filtered);
+    }
+
+    // Пересканирование по кнопке рядом с поиском. Само сканирование идёт в фоне;
+    // как только оно закончится, список нужно перестроить на клиентском потоке —
+    // это единственное место, где браузер уже открыт в момент завершения скана.
+    private void refreshTracks() {
+        CustomTrackManager.get().refresh();
+        FolderTrackLibrary.get().rescan(() ->
+                Minecraft.getInstance().execute(() -> applyFilter(searchBox.getValue())));
     }
 
     private void onAddSelectedClicked() {

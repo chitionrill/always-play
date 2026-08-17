@@ -57,6 +57,12 @@ public class CustomTrackManager {
             try {
                 tracks = scanFolder();
                 TrackVolumeManager.pruneMissing(); // заодно вычищаем кэш громкости от удалённых файлов
+                // Дерево папок (с поддержкой подпапок и выбранной игроком папки) держим в той же
+                // цикличности, что и этот плоский список — раньше оно обновлялось только по ручным
+                // действиям игрока (выбор папки, кнопка "Обновить", открытие браузера), поэтому пул
+                // для автоплея на старте игры/при входе в мир оставался пустым до первого такого
+                // действия.
+                FolderTrackLibrary.get().rescan(null);
             } finally {
                 scanning = false;
             }
@@ -97,10 +103,7 @@ public class CustomTrackManager {
         try {
             Path target = TRACKS_DIR.resolve(sourceFile.getFileName());
             Files.copy(sourceFile, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            refresh();
-            // Обновляем и дерево вложенных папок — тот же триггер "добавлен трек", что и для
-            // плоского списка выше, чтобы новый файл сразу появился в браузере треков.
-            FolderTrackLibrary.get().rescan(null);
+            refresh(); // обновляет и плоский список, и дерево папок — см. комментарий внутри refresh()
             return true;
         } catch (IOException e) {
             e.printStackTrace();

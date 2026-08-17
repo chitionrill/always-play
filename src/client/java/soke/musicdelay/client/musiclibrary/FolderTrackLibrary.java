@@ -91,7 +91,9 @@ public final class FolderTrackLibrary {
 
                 Path chosen = getChosenFolder();
                 if (chosen != null && FolderValidation.validate(chosen) == FolderValidation.Result.OK) {
-                    sources.add(new TrackLibrary.TrackSource(chosen, "Выбранная папка"));
+                    Path fileName = chosen.getFileName();
+                    String label = fileName != null ? fileName.toString() : chosen.toString();
+                    sources.add(new TrackLibrary.TrackSource(chosen, label));
                 }
 
                 library.rescan(sources);

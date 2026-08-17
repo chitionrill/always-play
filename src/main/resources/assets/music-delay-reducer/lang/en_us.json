@@ -76,5 +76,7 @@
   "music-delay-reducer.playlist.folder_based": "folder",
   "music-delay-reducer.folder_issue.title": "Folder Problem",
   "music-delay-reducer.folder_issue.acknowledge": "Got It",
-  "music-delay-reducer.folder_issue.fallback_notice": "The default folder will be used instead."
+  "music-delay-reducer.folder_issue.fallback_notice": "The default folder will be used instead.",
+  "music-delay-reducer.browser.refresh.tooltip": "Rescan the tracks folder and the chosen folder for new or removed files.",
+  "music-delay-reducer.browser.refresh": "Refresh"
 }

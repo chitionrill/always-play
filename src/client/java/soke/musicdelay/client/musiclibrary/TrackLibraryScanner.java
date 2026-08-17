@@ -21,8 +21,8 @@ public final class TrackLibraryScanner {
     /** Сюда добавляются новые поддерживаемые форматы. */
     private static final Set<String> SUPPORTED_EXTENSIONS = Set.of("wav", "mp3", "ogg", "flac");
 
-    /** Сканируем саму корневую папку (глубина 1) плюс один уровень подпапок (глубина 2). Глубже — игнорируем. */
-    private static final int MAX_DEPTH = 2;
+    /** Сканируем саму корневую папку (глубина 1) плюс два уровня подпапок (глубина 2 и 3). Глубже — игнорируем. */
+    private static final int MAX_DEPTH = 3;
 
     private TrackLibraryScanner() {
     }

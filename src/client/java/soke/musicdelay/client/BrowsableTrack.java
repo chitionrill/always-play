@@ -98,13 +98,11 @@ public class BrowsableTrack {
             }
         }
 
-        java.util.List<Path> customTracks = CustomTrackManager.get().getTracks();
-        if (!customTracks.isEmpty()) {
-            result.add(header(Component.translatable("music-delay-reducer.browser.custom_header")));
-            for (Path path : customTracks) {
-                result.add(custom(path));
-            }
-        }
+        // Плоский список из CustomTrackManager сюда больше не подмешивается: та же папка
+        // мода по умолчанию теперь сканируется через FolderTrackLibrary/FolderSectionBuilder
+        // (с поддержкой подпапок) и добавляется отдельно в MusicBrowserScreen.applyFilter().
+        // Раньше здесь была секция "— Твои треки —" — оставлять обе означало показывать
+        // одну и ту же папку дважды.
 
         return result;
     }
