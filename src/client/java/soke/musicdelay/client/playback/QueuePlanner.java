@@ -22,7 +22,7 @@ import java.util.List;
 public class QueuePlanner {
 
     public static List<Path> peekUpcomingCustomPaths(MusicTracker tracker, boolean playlistMode,
-                                                       Playlist activePlaylist, String mode, int count) {
+                                                     Playlist activePlaylist, String mode, int count) {
         List<Path> result = new ArrayList<>();
         if (count <= 0) return result;
 
@@ -38,8 +38,23 @@ public class QueuePlanner {
         int remaining = count - result.size();
         if (remaining <= 0) return result;
 
-        // 2) Остаток — предсказание через order manager, в зависимости от текущего режима
+        // 2) Остаток — предсказание через order manager, в зависимости от текущего режима.
+        // Предсказываем ТОЛЬКО для заведомо детерминированных режимов. TrackOrderManager/
+        // PlaylistOrderManager.pickNext() трактуют любой режим, кроме SEQUENTIAL и
+        // SHUFFLE_NO_REPEAT, как случайный (см. их switch — default-ветка). Предсказывать
+        // случайный выбор бессмысленно: реальный pickNext() в момент автоплея бросает свою
+        // СОБСТВЕННУЮ, никак не связанную со здешним "предсказанием" монетку — держать тёплыми
+        // 10 угаданных наугад путей означает почти гарантированно прогревать не те треки, тратя
+        // место в кэше и очередь исполнителя впустую (и оттесняя реально нужный трек назад в
+        // очереди). Раньше здесь была проверка "RANDOM".equals(...) — блок-лист по конкретному
+        // имени; если реальная строка режима называется иначе, проверка молча не срабатывала.
+        // Белый список по двум ИЗВЕСТНО детерминированным режимам не зависит от точного
+        // названия "случайного" — безопаснее.
         ModConfig config = ModConfig.get();
+        boolean predictable = "SEQUENTIAL".equals(config.trackOrderMode) || "SHUFFLE_NO_REPEAT".equals(config.trackOrderMode);
+        if (!predictable) {
+            return result;
+        }
         if (playlistMode && activePlaylist != null) {
             List<Playlist.PlaylistEntry> entries =
                     PlaylistOrderManager.peekNext(activePlaylist, config.trackOrderMode, remaining);
@@ -59,6 +74,18 @@ public class QueuePlanner {
         // VANILLA-режим не даёт custom-путей для preload — vanilla-треки грузит сам движок игры,
         // не WavPlayer, поэтому им эта система не нужна.
 
+        return result;
+    }
+
+    // Треки позади текущего — всегда чистая история, без предсказания (прошлое уже известно).
+    // Используется TrackPreloadManager, чтобы держать тёплым и путь Previous, не только Next.
+    public static List<Path> peekBehindCustomPaths(MusicTracker tracker, int count) {
+        List<Path> result = new ArrayList<>();
+        for (UnifiedTrack t : tracker.peekBackwardHistory(count)) {
+            if (t.type == UnifiedTrack.Type.CUSTOM) {
+                result.add(t.customPath);
+            }
+        }
         return result;
     }
 

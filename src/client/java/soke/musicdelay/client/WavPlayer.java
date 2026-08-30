@@ -40,10 +40,12 @@ public class WavPlayer {
     private static final List<TrackState> outgoing = new ArrayList<>();
     private static final Object lock = new Object();
 
-    // Раньше было 4 — этого хватало на "один трек вперёд". Теперь TrackPreloadManager держит
-    // прогретым окно до TrackPreloadManager.WINDOW треков вперёд + немного запаса на случай,
-    // пока старое ещё не вытеснилось, новое уже добавляется.
-    private static final int MAX_PRELOADED = 16;
+    // Было 16 — этого впритык хватало только под forward-окно (TrackPreloadManager.WINDOW=10).
+    // Теперь окно двустороннее (+ TrackPreloadManager.BACKWARD_WINDOW=3), и оба окна постоянно
+    // соревнуются за место в одном LRU-кэше — без запаса недавно вытесненный backward-трек мог
+    // не успеть докачаться до следующего вытеснения (источник бага "переключение назад иногда
+    // не срабатывает" при активном пролистывании). 24 = 10 forward + 3 backward + ощутимый запас.
+    private static final int MAX_PRELOADED = 24;
     private static final Object preloadMapLock = new Object();
 
     // LRU-кэш прогретых, но ещё не сыгранных треков. Раньше это была обычная
@@ -75,6 +77,20 @@ public class WavPlayer {
 
     private static final ExecutorService PRELOAD_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "mdr-audio-preload");
+        t.setDaemon(true);
+        return t;
+    });
+
+    // Отдельный поток под RMS-анализ громкости. Раньше это считалось в ТОЙ ЖЕ задаче, что и
+    // open() файла, внутри PRELOAD_EXECUTOR — и трек считался "готовым" только когда завершались
+    // ОБА шага. Для файла, который анализируется впервые, RMS может занимать несколько секунд
+    // (полное чтение и обработка PCM), из-за чего готовность трека к ПРОИГРЫВАНИЮ (не требующая
+    // анализа громкости — есть fallback на 0 dB с досчётом на лету, см. crossfadeTo) искусственно
+    // упиралась в самую дорогую операцию. Хуже того — пока RMS одного трека считался, ЭТА ЖЕ
+    // задача занимала единственный поток PRELOAD_EXECUTOR, не давая начаться open() следующего
+    // трека в очереди. Раздельные executor'ы решают обе проблемы разом.
+    private static final ExecutorService VOLUME_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "mdr-audio-volume");
         t.setDaemon(true);
         return t;
     });
@@ -186,9 +202,11 @@ public class WavPlayer {
         CompletableFuture<AudioTrack> finalFuture = future;
         Future<?> task = PRELOAD_EXECUTOR.submit(() -> {
             try {
-                // Считаем громкость здесь же, в фоновом потоке — если результата ещё нет в кэше,
-                // это самая тяжёлая часть подготовки трека, и делать её на тик-потоке нельзя
-                TrackVolumeManager.getGainOffsetDb(file);
+                // open() — единственное, что реально нужно для готовности к ПРОИГРЫВАНИЮ.
+                // RMS-анализ громкости сюда больше не входит (см. VOLUME_EXECUTOR ниже) —
+                // раньше именно он был самой долгой частью и держал готовность трека в
+                // заложниках у себя же, хотя crossfadeTo() и так умеет стартовать на 0 dB
+                // и досчитать громкость на лету.
                 AudioTrack t = AudioTrack.open(file);
                 finalFuture.complete(t);
             } catch (Exception e) {
@@ -200,6 +218,17 @@ public class WavPlayer {
                 }
             }
         });
+        // RMS — отдельная, независимая задача на СВОЁМ потоке. Не блокирует ни готовность
+        // трека к проигрыванию, ни очередь open() для остальных треков в prefetch-окне.
+        if (!TrackVolumeManager.isCached(file)) {
+            VOLUME_EXECUTOR.submit(() -> {
+                try {
+                    TrackVolumeManager.getGainOffsetDb(file);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
         synchronized (preloadMapLock) {
             // Если crossfadeTo() успел забрать трек из preloadedTracks, пока мы были здесь —
             // не держим ссылку на задачу, которая уже никому не принадлежит
@@ -257,12 +286,6 @@ public class WavPlayer {
                 preloadTasks.remove(file);
                 track = pending.join();
             } else {
-                // Не готов (либо ещё готовится, либо вообще не запрашивался) — НЕ ждём и
-                // не открываем файл синхронно на вызывающем (тик) потоке. Раньше здесь был
-                // pending.get(5, SECONDS) — блокировка до 5 секунд, из-за которой ручной скип
-                // фризил игру, если prefetch не успевал. Вместо этого просто просим подготовить
-                // (no-op, если уже готовится) и возвращаем false — вызывающий код (TrackPlaybackService)
-                // должен на false уйти в тот же short-wait путь, что и обычное докручивание трека.
                 track = null;
             }
         }
@@ -288,7 +311,7 @@ public class WavPlayer {
             newState.offsetDb = TrackVolumeManager.getGainOffsetDb(file);
         } else {
             newState.offsetDb = 0.0;
-            PRELOAD_EXECUTOR.submit(() -> {
+            VOLUME_EXECUTOR.submit(() -> {
                 try {
                     newState.offsetDb = TrackVolumeManager.getGainOffsetDb(file);
                 } catch (Exception e) {

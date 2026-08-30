@@ -49,6 +49,19 @@ public class MusicTracker {
         return history.get(currentIndex);
     }
 
+    // Read-only заглядывание НАЗАД по истории — симметрично peekForwardHistory. Раньше backward-
+    // навигация вообще не входила в prefetch-окно (QueuePlanner смотрел только вперёд), из-за
+    // чего переключение назад всегда было "холодным" стартом и не получало выгоды от prefetch.
+    public List<UnifiedTrack> peekBackwardHistory(int count) {
+        List<UnifiedTrack> result = new ArrayList<>();
+        int idx = currentIndex - 1;
+        while (result.size() < count && idx >= 0) {
+            result.add(history.get(idx));
+            idx--;
+        }
+        return result;
+    }
+
     // Read-only заглядывание вперёд по уже существующей истории (Previous->Next случай),
     // не трогает currentIndex. Возвращает меньше count элементов, если история закончилась —
     // остаток должен предсказать QueuePlanner через order manager'ы.

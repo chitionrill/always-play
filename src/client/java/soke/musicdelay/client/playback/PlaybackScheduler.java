@@ -24,7 +24,9 @@ import java.util.Random;
 public class PlaybackScheduler {
 
     private static final Random RANDOM = new Random();
-    private static final int PLAYLIST_MIN_PRELOAD_TICKS = 40;
+    // Было только для плейлистов — теперь используется и обычным custom-автоплеем
+    // (ensureMinPreloadDelay), поэтому переименовано из PLAYLIST_MIN_PRELOAD_TICKS.
+    private static final int MIN_PRELOAD_TICKS = 40;
 
     public static int autoplayCountdown = 0;
     public static Path plannedAutoplayPath = null;
@@ -178,7 +180,7 @@ public class PlaybackScheduler {
             Path path = Path.of(entry.value);
             WavPlayer.preload(path);
             if (!TrackVolumeManager.isCached(path)) {
-                return Math.max(baseDelayTicks, PLAYLIST_MIN_PRELOAD_TICKS);
+                return Math.max(baseDelayTicks, MIN_PRELOAD_TICKS);
             }
         }
         return baseDelayTicks;
@@ -196,6 +198,7 @@ public class PlaybackScheduler {
             plannedAutoplayPath = chosen;
             plannedAutoplayIsVanilla = false;
             WavPlayer.preload(chosen);
+            ensureMinPreloadDelay(chosen);
         } else if ("BOTH".equals(mode)) {
             boolean pickCustom = hasCustom && (!hasVanilla || RANDOM.nextBoolean());
             if (pickCustom) {
@@ -203,10 +206,23 @@ public class PlaybackScheduler {
                 plannedAutoplayPath = chosen;
                 plannedAutoplayIsVanilla = false;
                 WavPlayer.preload(chosen);
+                ensureMinPreloadDelay(chosen);
             } else if (hasVanilla) {
                 plannedAutoplayIsVanilla = true;
                 plannedAutoplayPath = null;
             }
+        }
+    }
+
+    // Раньше этой защиты не было для обычного (не-плейлистного) автоплея — только у плейлистов
+    // (primePlaylistEntryAndGetDelay). На самом первом автоплее за сессию autoplayCountdown
+    // равен 0 по умолчанию, так что preload() и попытка проиграть трек происходили в один и тот
+    // же тик — гарантированный промах кэша. Для RANDOM-режима это ещё актуальнее, т.к. там
+    // QueuePlanner больше не предсказывает вперёд (см. комментарий там) — единственный прогрев
+    // происходит здесь, и ему нужно дать реальное время на завершение.
+    private static void ensureMinPreloadDelay(Path chosen) {
+        if (!WavPlayer.isReady(chosen)) {
+            autoplayCountdown = Math.max(autoplayCountdown, MIN_PRELOAD_TICKS);
         }
     }
 
@@ -265,7 +281,11 @@ public class PlaybackScheduler {
         key.add(playlistMode);
         key.add(activePlaylist != null ? activePlaylist.id : null);
         key.add(mode);
-        key.add(tracker.hasPending());
+        // hasPending() раньше тоже был частью ключа — но именно из-за него каждый неудачный
+        // ретрай (crossfadeTo не готов -> setPending -> hasPending защёлкивается true) пересчитывал
+        // окно заново. currentCustomPath и так меняется мгновенно при переключении по истории
+        // (getPreviousTrack/getNextTrack двигают currentIndex сразу) — отдельный флаг pending
+        // был не нужен и только плодил лишние перезапуски.
 
         if (key.equals(lastPreloadTriggerKey)) return;
         lastPreloadTriggerKey = key;
