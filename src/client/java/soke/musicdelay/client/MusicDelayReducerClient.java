@@ -13,6 +13,7 @@ import soke.musicdelay.client.playback.StartupSequencer;
 import soke.musicdelay.client.playback.TrackPlaybackService;
 import soke.musicdelay.client.playback.VolumeKeyController;
 import soke.musicdelay.client.playback.PlaybackScheduler;
+import soke.musicdelay.client.playback.JukeboxDuckController;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -27,6 +28,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		ModKeybindings.register();
+		soke.musicdelay.client.jukebox.JukeboxRecordInteractionHandler.register();
 		CustomTrackManager.get().refresh();
 		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
@@ -92,6 +94,11 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				return;
 			}
 			StartupSequencer.tickVanillaFade(client, mixin, config);
+
+			// Приглушение музыки рядом с играющим проигрывателем — независимо от режима
+			// воспроизведения (VANILLA/CUSTOM/BOTH), поэтому тикается здесь, а не внутри
+			// конкретной ветки автоплея.
+			JukeboxDuckController.tick(client, mixin);
 
 			// --- Переключение вперёд/назад и автоплей теперь в PlaybackScheduler ---
 			if (ModKeybindings.skipForward.consumeClick()) {
@@ -172,6 +179,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 	public static void restartForWorldJoin() {
 		StartupSequencer.reset();
+		JukeboxDuckController.reset();
 		resetPlaybackState();
 	}
 }

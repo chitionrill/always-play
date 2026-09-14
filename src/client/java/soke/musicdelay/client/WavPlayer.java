@@ -27,6 +27,10 @@ public class WavPlayer {
     private static volatile boolean running = false;
     private static volatile boolean paused = false; // новое
     private static volatile float cachedMusicVolume = 1.0f;
+    // Множитель приглушения от JukeboxDuckController (1.0 = не приглушено, 0.0 = полностью
+    // приглушено рядом с играющим проигрывателем). Независим от cachedMusicVolume и от
+    // fade-логики отдельного трека — применяется поверх них в computeGain().
+    private static volatile float duckMultiplier = 1.0f;
 
     private static class TrackState {
         TrackResampler resampler;
@@ -181,7 +185,7 @@ public class WavPlayer {
             double progress = fadeProgress(ts);
             fadeFactor = ts.fadingIn ? progress : (1.0 - progress);
         }
-        double linear = cachedMusicVolume * Math.pow(10.0, ts.offsetDb / 20.0) * fadeFactor;
+        double linear = cachedMusicVolume * duckMultiplier * Math.pow(10.0, ts.offsetDb / 20.0) * fadeFactor;
         return (float) Math.max(0.0, Math.min(1.5, linear));
     }
 
@@ -373,5 +377,9 @@ public class WavPlayer {
 
     public static void tickVolumeSync() {
         cachedMusicVolume = Minecraft.getInstance().options.getSoundSourceVolume(SoundSource.MUSIC);
+    }
+
+    public static void setDuckMultiplier(float multiplier) {
+        duckMultiplier = multiplier;
     }
 }

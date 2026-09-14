@@ -29,12 +29,14 @@ public class ConfigScreen extends Screen {
     private static final int MAX_SKIP_DELAY_SECONDS = 5;
     private static final int MAX_CROSSFADE_TENTHS = 30;
     private static final int MAX_STARTUP_DELAY_SECONDS = 5;
+    private static final int MAX_JUKEBOX_FADE_TENTHS = 30;
+    private static final int MAX_JUKEBOX_RADIUS = 256;
 
     private static final int ROW_HEIGHT = 30;
     private static final int CONTENT_TOP = 35;
     private static final int BOTTOM_MARGIN = 10;
     private static final int SCROLL_STEP = 20;
-    private static final int TOTAL_ROWS = 13;
+    private static final int TOTAL_ROWS = 16;
 
     private final @Nullable Screen parent;
     private final ModConfig config;
@@ -49,6 +51,9 @@ public class ConfigScreen extends Screen {
     private int startupDelaySeconds;
     private boolean worldRestartEnabled;
     private String trackOrderMode;
+    private boolean jukeboxDuckingEnabled;
+    private double jukeboxDuckFadeSeconds;
+    private int jukeboxDetectionRadius;
 
     private Button vanillaButton;
     private Button customButton;
@@ -59,6 +64,7 @@ public class ConfigScreen extends Screen {
     private Button orderSequentialButton;
     private Button orderShuffleNoRepeatButton;
     private Button orderRandomButton;
+    private Button jukeboxDuckingToggleButton;
 
     private int scrollAmount = 0;
 
@@ -76,6 +82,9 @@ public class ConfigScreen extends Screen {
         this.startupDelaySeconds = config.startupDelaySeconds;
         this.worldRestartEnabled = config.worldRestartEnabled;
         this.trackOrderMode = config.trackOrderMode;
+        this.jukeboxDuckingEnabled = config.jukeboxDuckingEnabled;
+        this.jukeboxDuckFadeSeconds = config.jukeboxDuckFadeSeconds;
+        this.jukeboxDetectionRadius = config.jukeboxDetectionRadius;
     }
 
     private int maxScroll() {
@@ -184,6 +193,30 @@ public class ConfigScreen extends Screen {
         this.addRenderableWidget(worldRestartToggleButton);
         row++;
 
+        // --- Раздел: проигрыватель пластинок (jukebox duck) ---
+        jukeboxDuckingToggleButton = Button.builder(jukeboxDuckingButtonLabel(), b -> {
+            jukeboxDuckingEnabled = !jukeboxDuckingEnabled;
+            jukeboxDuckingToggleButton.setMessage(jukeboxDuckingButtonLabel());
+        }).bounds(centerX - 100, rowY(row), 200, 20).build();
+        jukeboxDuckingToggleButton.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.jukebox_ducking_toggle.tooltip")));
+        this.addRenderableWidget(jukeboxDuckingToggleButton);
+        row++;
+
+        AbstractSliderButton jukeboxFadeSlider = new TenthsSlider(centerX - 100, rowY(row), 200, 20,
+                "music-delay-reducer.config.jukebox_fade", MAX_JUKEBOX_FADE_TENTHS, jukeboxDuckFadeSeconds,
+                value -> jukeboxDuckFadeSeconds = Math.max(1.0, value));
+        jukeboxFadeSlider.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.jukebox_fade.tooltip")));
+        this.addRenderableWidget(jukeboxFadeSlider);
+        row++;
+
+        AbstractSliderButton jukeboxRadiusSlider = new SecondsSlider(centerX - 100, rowY(row), 200, 20,
+                "music-delay-reducer.config.jukebox_radius", MAX_JUKEBOX_RADIUS, jukeboxDetectionRadius,
+                value -> jukeboxDetectionRadius = Math.max(1, value));
+        jukeboxRadiusSlider.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.jukebox_radius.tooltip")));
+        this.addRenderableWidget(jukeboxRadiusSlider);
+        row++;
+        // --- конец раздела ---
+
         Button addTrackButton = Button.builder(Component.translatable("music-delay-reducer.config.add_track"), b -> openFileChooser())
                 .bounds(centerX - 100, rowY(row), 95, 20).build();
         addTrackButton.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.add_track.tooltip")));
@@ -217,6 +250,9 @@ public class ConfigScreen extends Screen {
             config.startupDelaySeconds = Math.max(1, startupDelaySeconds);
             config.worldRestartEnabled = worldRestartEnabled;
             config.trackOrderMode = trackOrderMode;
+            config.jukeboxDuckingEnabled = jukeboxDuckingEnabled;
+            config.jukeboxDuckFadeSeconds = jukeboxDuckFadeSeconds;
+            config.jukeboxDetectionRadius = jukeboxDetectionRadius;
             config.save();
             MusicDelayReducerClient.resetPlaybackState();
             this.onClose();
@@ -251,6 +287,12 @@ public class ConfigScreen extends Screen {
         return Component.translatable(worldRestartEnabled
                 ? "music-delay-reducer.config.world_restart_on"
                 : "music-delay-reducer.config.world_restart_off");
+    }
+
+    private Component jukeboxDuckingButtonLabel() {
+        return Component.translatable(jukeboxDuckingEnabled
+                ? "music-delay-reducer.config.jukebox_ducking_on"
+                : "music-delay-reducer.config.jukebox_ducking_off");
     }
 
     private void setMode(String mode) {

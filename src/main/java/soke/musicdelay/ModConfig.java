@@ -32,6 +32,14 @@ public class ModConfig {
     // и для игроков, которые никогда не открывали этот диалог, и для тех, кто на старой версии.
     public String customTracksFolder = null;
 
+    // Плавное приглушение музыки MDR рядом с играющим проигрывателем пластинок.
+    public boolean jukeboxDuckingEnabled = true;
+    // Длительность плавного затухания/нарастания громкости, секунды (UI-диапазон 1.0–3.0).
+    public double jukeboxDuckFadeSeconds = 2.0;
+    // Радиус обнаружения играющего проигрывателя, блоки. По умолчанию — дальность
+    // звука пластинки в ванилле (volume 4.0 * 16 = 64 блока). UI-максимум — 256.
+    public int jukeboxDetectionRadius = 64;
+
     private static ModConfig instance;
 
     public static ModConfig get() {

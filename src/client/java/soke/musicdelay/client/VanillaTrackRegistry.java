@@ -20,6 +20,10 @@ public class VanillaTrackRegistry {
 
     private static List<VanillaEntry> cachedAmbient = null;
     private static List<VanillaEntry> cachedDiscs = null;
+    // Обратная связь "файл диска -> id самой записи JukeboxSong в реестре игры". Нужна отдельно
+    // от VanillaEntry, потому что плейлисты (Playlist.PlaylistEntry) хранят путь к файлу, а
+    // JukeboxSongPlayer.play(...) для кастомных пластинок требует именно Holder<JukeboxSong>.
+    private static java.util.Map<Identifier, Identifier> discSoundLocationToSongId = new java.util.HashMap<>();
 
     public static List<VanillaEntry> getAmbientTracks() {
         if (cachedAmbient == null) refresh();
@@ -55,6 +59,7 @@ public class VanillaTrackRegistry {
         cachedAmbient = ambientResult;
 
         List<VanillaEntry> discsResult = new ArrayList<>();
+        java.util.Map<Identifier, Identifier> discMap = new java.util.HashMap<>();
         Minecraft client = Minecraft.getInstance();
         if (client.level != null) {
             client.level.registryAccess().lookup(Registries.JUKEBOX_SONG).ifPresent(registry ->
@@ -65,13 +70,24 @@ public class VanillaTrackRegistry {
                         WeighedSoundEvents discEvent = soundManager.getSoundEvent(location);
                         if (!(discEvent instanceof IWeighedSoundEventsMixin discMixin)) return;
 
+                        Identifier songId = holder.key().identifier();
                         for (Sound sound : discMixin.mdr$getAllSounds()) {
                             discsResult.add(new VanillaEntry(sound, song.description()));
+                            discMap.put(sound.getLocation(), songId);
                         }
                     })
             );
         }
         cachedDiscs = discsResult;
+        discSoundLocationToSongId = discMap;
+    }
+
+    // Возвращает id записи JukeboxSong в реестре игры (например "minecraft:5") для файла диска,
+    // сохранённого через toPlaylistEntry()/BrowsableTrack — нужно, чтобы позже проиграть именно
+    // эту песню через JukeboxSongPlayer.play(...), которому нужен Holder<JukeboxSong>, а не файл.
+    public static Identifier getJukeboxSongIdForSoundLocation(Identifier soundLocation) {
+        if (cachedDiscs == null) refresh();
+        return discSoundLocationToSongId.get(soundLocation);
     }
     // Находит настоящее отображаемое название по идентификатору звука — учитывает и обычную
 // музыку (через перевод игры), и пластинки (через их собственное description)

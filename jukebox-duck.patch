@@ -1,0 +1,196 @@
+diff --git a/src/client/java/soke/musicdelay/client/MusicDelayReducerClient.java b/src/client/java/soke/musicdelay/client/MusicDelayReducerClient.java
+index 42e5c08..e972663 100644
+--- a/src/client/java/soke/musicdelay/client/MusicDelayReducerClient.java
++++ b/src/client/java/soke/musicdelay/client/MusicDelayReducerClient.java
+@@ -13,6 +13,7 @@ import soke.musicdelay.client.playback.StartupSequencer;
+ import soke.musicdelay.client.playback.TrackPlaybackService;
+ import soke.musicdelay.client.playback.VolumeKeyController;
+ import soke.musicdelay.client.playback.PlaybackScheduler;
++import soke.musicdelay.client.playback.JukeboxDuckController;
+ 
+ import java.nio.file.Path;
+ import java.util.List;
+@@ -93,6 +94,11 @@ public class MusicDelayReducerClient implements ClientModInitializer {
+ 			}
+ 			StartupSequencer.tickVanillaFade(client, mixin, config);
+ 
++			// Приглушение музыки рядом с играющим проигрывателем — независимо от режима
++			// воспроизведения (VANILLA/CUSTOM/BOTH), поэтому тикается здесь, а не внутри
++			// конкретной ветки автоплея.
++			JukeboxDuckController.tick(client, mixin);
++
+ 			// --- Переключение вперёд/назад и автоплей теперь в PlaybackScheduler ---
+ 			if (ModKeybindings.skipForward.consumeClick()) {
+ 				PlaybackScheduler.handleSkipForward(mixin, tracker, mode, playlistMode, activePlaylist, config, skipDelayTicks);
+@@ -172,6 +178,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
+ 
+ 	public static void restartForWorldJoin() {
+ 		StartupSequencer.reset();
++		JukeboxDuckController.reset();
+ 		resetPlaybackState();
+ 	}
+ }
+\ No newline at end of file
+diff --git a/src/client/java/soke/musicdelay/client/WavPlayer.java b/src/client/java/soke/musicdelay/client/WavPlayer.java
+index 08910ac..de2dc5c 100644
+--- a/src/client/java/soke/musicdelay/client/WavPlayer.java
++++ b/src/client/java/soke/musicdelay/client/WavPlayer.java
+@@ -27,6 +27,10 @@ public class WavPlayer {
+     private static volatile boolean running = false;
+     private static volatile boolean paused = false; // новое
+     private static volatile float cachedMusicVolume = 1.0f;
++    // Множитель приглушения от JukeboxDuckController (1.0 = не приглушено, 0.0 = полностью
++    // приглушено рядом с играющим проигрывателем). Независим от cachedMusicVolume и от
++    // fade-логики отдельного трека — применяется поверх них в computeGain().
++    private static volatile float duckMultiplier = 1.0f;
+ 
+     private static class TrackState {
+         TrackResampler resampler;
+@@ -181,7 +185,7 @@ public class WavPlayer {
+             double progress = fadeProgress(ts);
+             fadeFactor = ts.fadingIn ? progress : (1.0 - progress);
+         }
+-        double linear = cachedMusicVolume * Math.pow(10.0, ts.offsetDb / 20.0) * fadeFactor;
++        double linear = cachedMusicVolume * duckMultiplier * Math.pow(10.0, ts.offsetDb / 20.0) * fadeFactor;
+         return (float) Math.max(0.0, Math.min(1.5, linear));
+     }
+ 
+@@ -374,4 +378,8 @@ public class WavPlayer {
+     public static void tickVolumeSync() {
+         cachedMusicVolume = Minecraft.getInstance().options.getSoundSourceVolume(SoundSource.MUSIC);
+     }
++
++    public static void setDuckMultiplier(float multiplier) {
++        duckMultiplier = multiplier;
++    }
+ }
+\ No newline at end of file
+diff --git a/src/client/java/soke/musicdelay/client/playback/JukeboxDuckController.java b/src/client/java/soke/musicdelay/client/playback/JukeboxDuckController.java
+new file mode 100644
+index 0000000..de553df
+--- /dev/null
++++ b/src/client/java/soke/musicdelay/client/playback/JukeboxDuckController.java
+@@ -0,0 +1,104 @@
++package soke.musicdelay.client.playback;
++
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.core.BlockPos;
++import net.minecraft.sounds.SoundSource;
++import net.minecraft.world.level.ChunkPos;
++import net.minecraft.world.level.block.entity.BlockEntity;
++import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
++import net.minecraft.world.level.chunk.LevelChunk;
++import soke.musicdelay.ModConfig;
++import soke.musicdelay.client.IMusicManagerMixin;
++import soke.musicdelay.client.WavPlayer;
++
++// Плавно приглушает музыку MDR (и ванильную через IMusicManagerMixin, и кастомную через
++// WavPlayer.duckMultiplier), пока рядом с игроком играет пластинка в проигрывателе, и плавно
++// возвращает громкость обратно, когда пластинка остановилась/её вытащили ИЛИ игрок отошёл за
++// пределы детект-радиуса. Сам трек MDR при этом никогда не останавливается — только громкость
++// идёт к 0 и обратно, поэтому возобновление всегда мгновенное и без повторной загрузки.
++public class JukeboxDuckController {
++
++    // Сканируем не каждый тик — обход блок-энтити в загруженных чанках не бесплатный,
++    // а для плавности fade достаточно свежих данных раз в четверть секунды.
++    private static final int SCAN_INTERVAL_TICKS = 5;
++
++    private static float duckFactor = 1.0f; // 1.0 = музыка MDR полностью слышна, 0.0 = приглушена
++    private static int scanCountdown = 0;
++    private static boolean jukeboxNearby = false;
++
++    public static void tick(Minecraft client, IMusicManagerMixin mixin) {
++        ModConfig config = ModConfig.get();
++
++        if (!config.jukeboxDuckingEnabled) {
++            // Фича выключена в настройках — гарантируем, что множитель не завис на приглушённом
++            // значении с прошлой сессии/до выключения тумблера.
++            if (duckFactor != 1.0f) {
++                duckFactor = 1.0f;
++                applyGain(client, mixin);
++            }
++            return;
++        }
++
++        if (--scanCountdown <= 0) {
++            scanCountdown = SCAN_INTERVAL_TICKS;
++            jukeboxNearby = isPlayingJukeboxNearby(client, config.jukeboxDetectionRadius);
++        }
++
++        float target = jukeboxNearby ? 0.0f : 1.0f;
++        float durationTicks = (float) Math.max(1.0, config.jukeboxDuckFadeSeconds) * 20f;
++        float step = 1.0f / durationTicks;
++
++        if (duckFactor < target) {
++            duckFactor = Math.min(target, duckFactor + step);
++        } else if (duckFactor > target) {
++            duckFactor = Math.max(target, duckFactor - step);
++        }
++
++        applyGain(client, mixin);
++    }
++
++    private static void applyGain(Minecraft client, IMusicManagerMixin mixin) {
++        float sliderVolume = client.options.getSoundSourceVolume(SoundSource.MUSIC);
++        mixin.mdr$setGain(sliderVolume * duckFactor);
++        WavPlayer.setDuckMultiplier(duckFactor);
++    }
++
++    // ВАЖНО (нужна проверка на 26.2): isRecordPlaying() — это имя метода по аналогии со старыми
++    // версиями маппинга (isPlayingRecord в Yarn 1.19+). Если gradlew build упадёт именно на этой
++    // строке — открой JukeboxBlockEntity в IDE (Ctrl+клик) и пришли мне точное имя метода,
++    // проверяющего "пластинка сейчас играет" — поправлю за секунду. Остальной код этого файла
++    // от точного имени метода не зависит.
++    private static boolean isPlayingJukeboxNearby(Minecraft client, int radius) {
++        ClientLevel level = client.level;
++        if (level == null || client.player == null) return false;
++
++        BlockPos playerPos = client.player.blockPosition();
++        int chunkRadius = (radius >> 4) + 1;
++        ChunkPos centerChunk = new ChunkPos(playerPos);
++        double radiusSq = (double) radius * radius;
++
++        for (int cx = centerChunk.x - chunkRadius; cx <= centerChunk.x + chunkRadius; cx++) {
++            for (int cz = centerChunk.z - chunkRadius; cz <= centerChunk.z + chunkRadius; cz++) {
++                if (!level.hasChunk(cx, cz)) continue;
++                LevelChunk chunk = level.getChunk(cx, cz);
++                for (BlockEntity be : chunk.getBlockEntities().values()) {
++                    if (!(be instanceof JukeboxBlockEntity jukebox)) continue;
++                    if (!jukebox.isRecordPlaying()) continue;
++                    if (jukebox.getBlockPos().distSqr(playerPos) <= radiusSq) {
++                        return true;
++                    }
++                }
++            }
++        }
++        return false;
++    }
++
++    // Вызывать из restartForWorldJoin()/resetPlaybackState() — иначе при заходе в новый мир
++    // duckFactor мог бы остаться приглушённым с прошлой сессии до первого нового скана.
++    public static void reset() {
++        duckFactor = 1.0f;
++        scanCountdown = 0;
++        jukeboxNearby = false;
++    }
++}
+diff --git a/src/main/java/soke/musicdelay/ModConfig.java b/src/main/java/soke/musicdelay/ModConfig.java
+index 0c13f7b..93ff4c9 100644
+--- a/src/main/java/soke/musicdelay/ModConfig.java
++++ b/src/main/java/soke/musicdelay/ModConfig.java
+@@ -32,6 +32,14 @@ public class ModConfig {
+     // и для игроков, которые никогда не открывали этот диалог, и для тех, кто на старой версии.
+     public String customTracksFolder = null;
+ 
++    // Плавное приглушение музыки MDR рядом с играющим проигрывателем пластинок.
++    public boolean jukeboxDuckingEnabled = true;
++    // Длительность плавного затухания/нарастания громкости, секунды (UI-диапазон 1.0–3.0).
++    public double jukeboxDuckFadeSeconds = 2.0;
++    // Радиус обнаружения играющего проигрывателя, блоки. По умолчанию — дальность
++    // звука пластинки в ванилле (volume 4.0 * 16 = 64 блока). UI-максимум — 256.
++    public int jukeboxDetectionRadius = 64;
++
+     private static ModConfig instance;
+ 
+     public static ModConfig get() {
