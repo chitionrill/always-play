@@ -27,6 +27,9 @@ public class MusicDelayReducer implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		PayloadTypeRegistry.serverboundPlay().register(RecordCustomDataPayload.TYPE, RecordCustomDataPayload.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(
+				soke.musicdelay.network.CustomTrackJukeboxStartPayload.TYPE,
+				soke.musicdelay.network.CustomTrackJukeboxStartPayload.CODEC);
 
 		ServerPlayNetworking.registerGlobalReceiver(RecordCustomDataPayload.TYPE, (payload, context) -> {
 			context.server().execute(() -> {

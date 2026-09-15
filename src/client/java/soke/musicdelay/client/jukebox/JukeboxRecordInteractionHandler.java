@@ -92,8 +92,13 @@ public class JukeboxRecordInteractionHandler {
             if (song != null) {
                 jukebox.getSongPlayer().play(world, song);
             }
+        } else if ("CUSTOM".equals(recordData.trackType()) && world instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            var payload = new soke.musicdelay.network.CustomTrackJukeboxStartPayload(pos, recordData.trackValue());
+            for (net.minecraft.server.level.ServerPlayer tracking :
+                    net.fabricmc.fabric.api.networking.v1.PlayerLookup.tracking(serverLevel, pos)) {
+                net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(tracking, payload);
+            }
         }
-        // VANILLA (обычная фоновая музыка без обёртки JukeboxSong) и CUSTOM (свой файл) —
-        // пока не обрабатываются, это следующий этап.
+        // VANILLA (обычная фоновая музыка без обёртки JukeboxSong) пока не обрабатывается.
     }
 }

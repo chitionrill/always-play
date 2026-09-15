@@ -29,6 +29,12 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		ModKeybindings.register();
 		soke.musicdelay.client.jukebox.JukeboxRecordInteractionHandler.register();
+
+		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
+				soke.musicdelay.network.CustomTrackJukeboxStartPayload.TYPE,
+				(payload, context) -> context.client().execute(() ->
+						soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.startAt(
+								payload.pos(), java.nio.file.Path.of(payload.trackValue()))));
 		CustomTrackManager.get().refresh();
 		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
@@ -99,6 +105,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			// воспроизведения (VANILLA/CUSTOM/BOTH), поэтому тикается здесь, а не внутри
 			// конкретной ветки автоплея.
 			JukeboxDuckController.tick(client, mixin);
+			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.tick(client, config.jukeboxDetectionRadius);
 
 			// --- Переключение вперёд/назад и автоплей теперь в PlaybackScheduler ---
 			if (ModKeybindings.skipForward.consumeClick()) {
