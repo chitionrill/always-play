@@ -38,6 +38,13 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		CustomTrackManager.get().refresh();
 		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			// Гарантированная точка остановки при выходе из мира/отключении от сервера —
+			// не полагаемся на то, что обычный тик-цикл успеет/сможет это сделать сам.
+			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.stopActive();
+			JukeboxDuckController.reset();
+		});
+
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
 			// Обновляем список ванильных треков (в т.ч. пластинок) при каждом заходе в мир —
 			// реестр пластинок доступен только когда мир загружен, без этого он остаётся пустым/устаревшим
@@ -49,6 +56,17 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			WavPlayer.tickVolumeSync();
+
+			// Логика проигрывателя пластинок — намеренно в самом начале тика, а не ниже среди
+			// остальной логики. Если что-то дальше по цепочке (ручная пауза, StartupSequencer
+			// и т.д.) рано выходит из тика, эта часть всё равно должна каждый раз отработать —
+			// иначе возможны зависшие "играет параллельно" или "не останавливается при выходе
+			// в меню" баги.
+			MusicManager managerForJukebox = client.getMusicManager();
+			IMusicManagerMixin mixinForJukebox = (IMusicManagerMixin) managerForJukebox;
+			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.tick(client, ModConfig.get().jukeboxDetectionRadius);
+			JukeboxDuckController.tick(client, mixinForJukebox);
+
 			VolumeKeyController.tick(client);
 
 			if (ModKeybindings.openMusicBrowser.consumeClick() && client.level != null && client.gui.screen() == null) {
@@ -100,12 +118,6 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				return;
 			}
 			StartupSequencer.tickVanillaFade(client, mixin, config);
-
-			// Приглушение музыки рядом с играющим проигрывателем — независимо от режима
-			// воспроизведения (VANILLA/CUSTOM/BOTH), поэтому тикается здесь, а не внутри
-			// конкретной ветки автоплея.
-			JukeboxDuckController.tick(client, mixin);
-			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.tick(client, config.jukeboxDetectionRadius);
 
 			// --- Переключение вперёд/назад и автоплей теперь в PlaybackScheduler ---
 			if (ModKeybindings.skipForward.consumeClick()) {

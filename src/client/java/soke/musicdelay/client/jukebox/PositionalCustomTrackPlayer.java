@@ -2,6 +2,7 @@ package soke.musicdelay.client.jukebox;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.JukeboxBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -13,15 +14,18 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.SourceDataLine;
 import java.nio.file.Path;
 
-// Позиционное (по расстоянию до игрока) воспроизведение СВОЕГО аудиофайла (WAV/MP3/OGG/FLAC) из
-// блока проигрывателя пластинок. Отдельно от основного WavPlayer — тот играет "вездесуще", без
-// привязки к точке в мире, а тут нужна привязанная к позиции, плавно меняющаяся по дистанции
-// громкость. Переиспользует существующий декодер AudioTrack, но со своей отдельной линией вывода
-// (без кроссфейда/микса — здесь всегда только один файл).
+// Позиционное (по расстоянию и стороне относительно взгляда игрока) воспроизведение СВОЕГО
+// аудиофайла (WAV/MP3/OGG/FLAC) из блока проигрывателя пластинок. Отдельно от основного
+// WavPlayer — тот играет "вездесуще", без привязки к точке в мире. Переиспользует существующий
+// декодер AudioTrack, но со своей отдельной линией вывода (без кроссфейда/микса — здесь всегда
+// только один файл).
 //
-// Упрощения v1: без стереопанорамы по стороне света (только громкость по расстоянию), не более
-// одного одновременно играющего кастомного трека на клиент, без зацикливания — доиграл, значит
-// доиграл, как в реальности (пластинка остаётся в блоке до ручного вытаскивания).
+// Панорама (лево/право) считается только для стерео-файлов — для моно применяется только
+// громкость по дистанции, панорамировать нечего.
+//
+// Упрощения v1: не более одного одновременно играющего кастомного трека на клиент, без
+// зацикливания — доиграл, значит доиграл, как в реальности (пластинка остаётся в блоке до
+// ручного вытаскивания).
 public class PositionalCustomTrackPlayer {
 
     private static final int SCAN_INTERVAL_TICKS = 5;
@@ -36,6 +40,7 @@ public class PositionalCustomTrackPlayer {
     private volatile boolean stopRequested = false;
     private volatile boolean paused = false;
     private volatile float targetGain = 1.0f;
+    private volatile float targetPan = 0f; // -1 = полностью слева, 0 = по центру, 1 = полностью справа
     private int scanCountdown = 0;
 
     private PositionalCustomTrackPlayer(BlockPos pos, AudioTrack track, SourceDataLine line) {
@@ -108,11 +113,24 @@ public class PositionalCustomTrackPlayer {
             return;
         }
 
+        // Каждый раз, когда мы заново достоверно убедились, что пластинка на месте (в т.ч. после
+        // возврата из выгруженного чанка), на всякий случай заново регистрируем позицию в
+        // JukeboxDuckController — идемпотентно (просто добавление в Set), но подстраховывает от
+        // любой причины, по которой запись могла выпасть из списка, пока чанк был выгружен.
+        JukeboxDuckController.onJukeboxSoundStart(player.pos);
         player.paused = false;
 
         double distance = Math.sqrt(player.pos.distSqr(client.player.blockPosition()));
         float gain = distance >= detectionRadius ? 0f : (float) (1.0 - (distance / detectionRadius));
         player.targetGain = gain;
+
+        // Панорама: угол между направлением взгляда игрока и направлением на блок. 0° — блок
+        // прямо по курсу (по центру), ±90° — строго сбоку (полностью в одном ухе).
+        double dx = (player.pos.getX() + 0.5) - client.player.getX();
+        double dz = (player.pos.getZ() + 0.5) - client.player.getZ();
+        double angleToTarget = Math.toDegrees(Math.atan2(-dx, dz));
+        double relative = Mth.wrapDegrees(angleToTarget - client.player.getYRot());
+        player.targetPan = (float) Math.sin(Math.toRadians(relative));
     }
 
     private void runLoop() {
@@ -130,12 +148,35 @@ public class PositionalCustomTrackPlayer {
             if (read < 0) break; // файл доиграл до конца сам по себе
 
             float gain = targetGain;
-            for (int i = 0; i + 1 < read; i += 2) {
-                int sample = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
-                sample = Math.round(sample * gain);
-                sample = Math.max(-32768, Math.min(32767, sample));
-                buffer[i] = (byte) (sample & 0xFF);
-                buffer[i + 1] = (byte) ((sample >> 8) & 0xFF);
+
+            if (track.getChannels() == 2) {
+                // Стерео — применяем и громкость, и панораму. Constant-power pan law: при pan=0
+                // оба канала на полной громкости, при уходе в сторону один канал плавно растёт
+                // до максимума, другой падает до нуля (без резкого провала суммарной громкости
+                // посередине, как было бы при простом линейном пане).
+                float pan = targetPan;
+                double angle = (pan + 1.0) * (Math.PI / 4.0); // 0..PI/2
+                float leftMul = gain * (float) Math.cos(angle);
+                float rightMul = gain * (float) Math.sin(angle);
+
+                for (int i = 0; i + 3 < read; i += 4) {
+                    int left = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
+                    int right = (short) ((buffer[i + 2] & 0xFF) | (buffer[i + 3] << 8));
+                    left = clamp16(Math.round(left * leftMul));
+                    right = clamp16(Math.round(right * rightMul));
+                    buffer[i] = (byte) (left & 0xFF);
+                    buffer[i + 1] = (byte) ((left >> 8) & 0xFF);
+                    buffer[i + 2] = (byte) (right & 0xFF);
+                    buffer[i + 3] = (byte) ((right >> 8) & 0xFF);
+                }
+            } else {
+                // Моно — панорамировать нечего, только громкость по дистанции.
+                for (int i = 0; i + 1 < read; i += 2) {
+                    int sample = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
+                    sample = clamp16(Math.round(sample * gain));
+                    buffer[i] = (byte) (sample & 0xFF);
+                    buffer[i + 1] = (byte) ((sample >> 8) & 0xFF);
+                }
             }
 
             line.write(buffer, 0, read);
@@ -145,6 +186,10 @@ public class PositionalCustomTrackPlayer {
         line.close();
         track.close();
         finishCleanup();
+    }
+
+    private static int clamp16(int sample) {
+        return Math.max(-32768, Math.min(32767, sample));
     }
 
     private void finishCleanup() {
