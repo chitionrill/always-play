@@ -41,7 +41,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			// Гарантированная точка остановки при выходе из мира/отключении от сервера —
 			// не полагаемся на то, что обычный тик-цикл успеет/сможет это сделать сам.
-			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.stopActive();
+			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.stopAll();
 			JukeboxDuckController.reset();
 		});
 
