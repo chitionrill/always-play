@@ -35,6 +35,12 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 				(payload, context) -> context.client().execute(() ->
 						soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.startAt(
 								payload.pos(), java.nio.file.Path.of(payload.trackValue()))));
+
+		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
+				soke.musicdelay.network.AmbientTrackJukeboxStartPayload.TYPE,
+				(payload, context) -> context.client().execute(() ->
+						soke.musicdelay.client.jukebox.AmbientJukeboxPlayer.startAt(
+								payload.pos(), payload.soundLocation())));
 		CustomTrackManager.get().refresh();
 		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
@@ -42,6 +48,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			// Гарантированная точка остановки при выходе из мира/отключении от сервера —
 			// не полагаемся на то, что обычный тик-цикл успеет/сможет это сделать сам.
 			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.stopAll();
+			soke.musicdelay.client.jukebox.AmbientJukeboxPlayer.stopAll();
 			JukeboxDuckController.reset();
 		});
 
@@ -65,6 +72,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			MusicManager managerForJukebox = client.getMusicManager();
 			IMusicManagerMixin mixinForJukebox = (IMusicManagerMixin) managerForJukebox;
 			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.tick(client, ModConfig.get().jukeboxDetectionRadius);
+			soke.musicdelay.client.jukebox.AmbientJukeboxPlayer.tick(client);
 			JukeboxDuckController.tick(client, mixinForJukebox);
 
 			VolumeKeyController.tick(client);

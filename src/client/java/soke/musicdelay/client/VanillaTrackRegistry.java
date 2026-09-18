@@ -20,10 +20,12 @@ public class VanillaTrackRegistry {
 
     private static List<VanillaEntry> cachedAmbient = null;
     private static List<VanillaEntry> cachedDiscs = null;
-    // Обратная связь "файл диска -> id самой записи JukeboxSong в реестре игры". Нужна отдельно
-    // от VanillaEntry, потому что плейлисты (Playlist.PlaylistEntry) хранят путь к файлу, а
-    // JukeboxSongPlayer.play(...) для кастомных пластинок требует именно Holder<JukeboxSong>.
+    // Обратная связь "файл ->  id самого звукового события в реестре игры" — отдельно от
+    // VanillaEntry, потому что плейлисты (Playlist.PlaylistEntry) хранят путь к файлу, а
+    // проигрывание через настоящий звуковой движок (SimpleSoundInstance) требует именно id
+    // события, а не файла (у одного события может быть несколько файлов-вариантов).
     private static java.util.Map<Identifier, Identifier> discSoundLocationToSongId = new java.util.HashMap<>();
+    private static java.util.Map<Identifier, Identifier> ambientSoundLocationToEventId = new java.util.HashMap<>();
 
     public static List<VanillaEntry> getAmbientTracks() {
         if (cachedAmbient == null) refresh();
@@ -53,6 +55,7 @@ public class VanillaTrackRegistry {
                 if (seenLocations.add(loc)) {
                     Component name = Component.translatable(sound.getLocation().toShortLanguageKey().replace("/", "."));
                     ambientResult.add(new VanillaEntry(sound, name));
+                    ambientSoundLocationToEventId.put(sound.getLocation(), id);
                 }
             }
         }
@@ -88,6 +91,15 @@ public class VanillaTrackRegistry {
     public static Identifier getJukeboxSongIdForSoundLocation(Identifier soundLocation) {
         if (cachedDiscs == null) refresh();
         return discSoundLocationToSongId.get(soundLocation);
+    }
+
+    // Возвращает id звукового события в реестре игры (например "minecraft:music.game") для файла
+    // обычной фоновой музыки, сохранённого через toPlaylistEntry()/BrowsableTrack — нужно, чтобы
+    // проиграть его через настоящий звуковой движок (SimpleSoundInstance), которому требуется
+    // именно id события, а не файла.
+    public static Identifier getAmbientSoundEventIdForSoundLocation(Identifier soundLocation) {
+        if (cachedAmbient == null) refresh();
+        return ambientSoundLocationToEventId.get(soundLocation);
     }
     // Находит настоящее отображаемое название по идентификатору звука — учитывает и обычную
 // музыку (через перевод игры), и пластинки (через их собственное description)

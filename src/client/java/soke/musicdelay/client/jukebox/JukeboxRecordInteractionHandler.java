@@ -32,8 +32,10 @@ import soke.musicdelay.jukebox.CustomRecordData;
 // эта логика в игре завязана на сам блок и общий контейнер-слот (ContainerSingleItem), а не на
 // компонент предмета, так что должна работать как обычно даже для нашего кастомного предмета.
 //
-// Пока это только физическая вставка (блок-состояние HAS_RECORD + сам предмет в блок-энтити) —
-// без запуска звука, это следующий этап.
+// После физической вставки (блок-состояние HAS_RECORD + предмет в блок-энтити) запускает
+// воспроизведение в зависимости от типа записанного трека: настоящий диск через штатный
+// JukeboxSongPlayer, обычный ванильный трек и свой файл — каждый своим сетевым пакетом клиентам
+// рядом с блоком.
 public class JukeboxRecordInteractionHandler {
 
     private static final String TRIGGER_NAME = "Clean";
@@ -98,7 +100,12 @@ public class JukeboxRecordInteractionHandler {
                     net.fabricmc.fabric.api.networking.v1.PlayerLookup.tracking(serverLevel, pos)) {
                 net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(tracking, payload);
             }
+        } else if ("VANILLA".equals(recordData.trackType()) && world instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            var payload = new soke.musicdelay.network.AmbientTrackJukeboxStartPayload(pos, recordData.trackValue());
+            for (net.minecraft.server.level.ServerPlayer tracking :
+                    net.fabricmc.fabric.api.networking.v1.PlayerLookup.tracking(serverLevel, pos)) {
+                net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(tracking, payload);
+            }
         }
-        // VANILLA (обычная фоновая музыка без обёртки JukeboxSong) пока не обрабатывается.
     }
 }

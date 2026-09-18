@@ -73,6 +73,16 @@ public class RecordMetadataScreen extends Screen {
                 type = "VANILLA_DISC";
                 value = songId.toString();
             }
+        } else if (track.kind == BrowsableTrack.Kind.AMBIENT) {
+            // Как и с дисками — шлём id самого звукового события в реестре игры, а не путь к
+            // аудиофайлу, чтобы можно было проиграть трек через настоящий звуковой движок.
+            net.minecraft.resources.Identifier soundLocation = net.minecraft.resources.Identifier.parse(entry.value);
+            net.minecraft.resources.Identifier eventId =
+                    soke.musicdelay.client.VanillaTrackRegistry.getAmbientSoundEventIdForSoundLocation(soundLocation);
+            if (eventId != null) {
+                type = "VANILLA";
+                value = eventId.toString();
+            }
         }
 
         ClientPlayNetworking.send(new RecordCustomDataPayload(type, value, title, composer));
