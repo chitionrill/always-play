@@ -3,10 +3,10 @@ package soke.musicdelay.client.jukebox;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.JukeboxBlock;
-import net.minecraft.world.level.block.state.BlockState;
+import soke.musicdelay.ModConfig;
+import soke.musicdelay.MusicDelayReducer;
 import soke.musicdelay.client.AudioTrack;
 import soke.musicdelay.client.playback.JukeboxDuckController;
 
@@ -17,230 +17,255 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-// Позиционное (по расстоянию и стороне относительно взгляда игрока) воспроизведение СВОЕГО
-// аудиофайла (WAV/MP3/OGG/FLAC) из блока проигрывателя пластинок. Отдельно от основного
-// WavPlayer — тот играет "вездесуще", без привязки к точке в мире. Переиспользует существующий
-// декодер AudioTrack, но со своей отдельной линией вывода на каждый проигрыватель (без
-// кроссфейда/микса — у каждого экземпляра всегда только один файл).
-//
-// Поддерживает несколько одновременно играющих кастомных пластинок — по одному экземпляру этого
-// класса на позицию блока, в карте activeByPos.
-//
-// Панорама (лево/право) считается только для стерео-файлов — для моно применяется только
-// громкость по дистанции, панорамировать нечего.
-//
-// Без зацикливания — доиграл, значит доиграл, как в реальности (пластинка остаётся в блоке до
-// ручного вытаскивания).
+/** One playback instance per jukebox, independent of Minecraft's sound engine. */
 public class PositionalCustomTrackPlayer {
-
-    private static final int SCAN_INTERVAL_TICKS = 1;
     private static final int BUFFER_FRAMES = 1024;
-    // Максимальный уход панорамы в сторону (1.0 = полностью в одном ухе, тише не бывает).
-    // 0.85 оставляет дальнему уху заметный, но приглушённый уровень даже строго сбоку.
     private static final float MAX_PAN = 0.85f;
-
     private static final Map<BlockPos, PositionalCustomTrackPlayer> activeByPos = new ConcurrentHashMap<>();
 
     private final BlockPos pos;
     private final AudioTrack track;
     private final SourceDataLine line;
-    private final Thread thread;
-    private volatile boolean stopRequested = false;
-    private volatile boolean paused = false;
-    private volatile float targetGain = 1.0f;
-    private volatile float targetPan = 0f; // -1 = полностью слева, 0 = по центру, 1 = полностью справа
-    private float currentGain = 1.0f; // используется только внутри runLoop — плавная интерполяция к targetGain
-    private float currentPan = 0f;    // используется только внутри runLoop — плавная интерполяция к targetPan
-    private int scanCountdown = 0;
+    private volatile boolean stopRequested;
+    private volatile boolean paused = true;
+
+    // Ждём подтверждения вставки пластинки на клиенте.
+// Проверяется в игровом потоке, максимум 40 проверок.
+    private boolean recordStateConfirmed = false;
+    private int recordStateWaitTicks = 40;
+    private volatile float targetGain;
+    private volatile float targetPan;
+    private float currentGain;
+    private float currentPan;
 
     private PositionalCustomTrackPlayer(BlockPos pos, AudioTrack track, SourceDataLine line) {
         this.pos = pos.immutable();
         this.track = track;
         this.line = line;
-        this.thread = new Thread(this::runLoop, "mdr-jukebox-audio-" + pos.getX() + "-" + pos.getY() + "-" + pos.getZ());
-        this.thread.setDaemon(true);
     }
 
     public static void startAt(BlockPos pos, Path filePath) {
-        stop(pos); // если на этой позиции уже что-то играло — заменяем
-
-        AudioTrack track;
-        SourceDataLine line;
         try {
-            track = AudioTrack.open(filePath);
-            AudioFormat format = new AudioFormat(track.getSampleRate(), 16, track.getChannels(), true, false);
-            line = AudioSystem.getSourceDataLine(format);
-            line.open(format, BUFFER_FRAMES * track.getChannels() * 2 * 4);
-            line.start();
+            startAt(pos, AudioTrack.open(filePath));
         } catch (Exception e) {
-            // Не удалось открыть файл/линию — тихо не проигрываем, не ломаем остальное.
-            return;
+            MusicDelayReducer.LOGGER.error("Cannot open jukebox file: " + filePath, e);
         }
+    }
 
-        PositionalCustomTrackPlayer player = new PositionalCustomTrackPlayer(pos, track, line);
-        activeByPos.put(player.pos, player);
-        JukeboxDuckController.onJukeboxSoundStart(player.pos);
-        player.thread.start();
+    // Takes ownership of the decoder, even if the output cannot be opened.
+    public static void startAt(BlockPos pos, AudioTrack track) {
+        stop(pos);
+        SourceDataLine line = null;
+        try {
+            AudioFormat format = new AudioFormat(track.getSampleRate(), 16, 2, true, false);
+            line = AudioSystem.getSourceDataLine(format);
+            line.open(format, BUFFER_FRAMES * 4 * 4);
+            PositionalCustomTrackPlayer player = new PositionalCustomTrackPlayer(pos, track, line);
+            activeByPos.put(player.pos, player);
+            MusicDelayReducer.LOGGER.info(
+                    "[Jukebox] Audio opened at {}: sampleRate={}, channels={}",
+                    player.pos, track.getSampleRate(), track.getChannels()
+            );
+            player.tickOne(Minecraft.getInstance(), ModConfig.get().jukeboxDetectionRadius);
+            Thread thread = new Thread(player::runLoop, "mdr-jukebox-" + pos);
+            thread.setDaemon(true);
+            thread.start();
+        } catch (Exception e) {
+            if (line != null) line.close();
+            track.close();
+            PositionalCustomTrackPlayer existing = activeByPos.get(pos);
+            if (existing != null && existing.track == track && activeByPos.remove(pos, existing)) {
+                JukeboxDuckController.onJukeboxSoundStop(pos);
+            }
+            MusicDelayReducer.LOGGER.error("Cannot start jukebox audio", e);
+        }
     }
 
     public static void stop(BlockPos pos) {
-        PositionalCustomTrackPlayer player = activeByPos.remove(pos.immutable());
+        PositionalCustomTrackPlayer player = activeByPos.remove(pos);
         if (player == null) return;
+
         player.stopRequested = true;
-        JukeboxDuckController.onJukeboxSoundStop(player.pos);
+        player.targetGain = 0.0f;
+        JukeboxDuckController.onJukeboxSoundStop(pos);
+
+        // Игровой поток не должен ждать аудиоустройство.
+        Thread cleanupThread = new Thread(() -> {
+            long started = System.nanoTime();
+
+            try {
+                player.line.stop();
+                player.line.flush();
+            } catch (Exception e) {
+                MusicDelayReducer.LOGGER.warn(
+                        "[Jukebox] Error stopping audio at " + player.pos, e
+                );
+            } finally {
+                try {
+                    player.line.close();
+                } catch (Exception e) {
+                    MusicDelayReducer.LOGGER.warn(
+                            "[Jukebox] Error closing audio at " + player.pos, e
+                    );
+                }
+
+                long elapsedMs =
+                        (System.nanoTime() - started) / 1_000_000L;
+
+                if (elapsedMs >= 50) {
+                    MusicDelayReducer.LOGGER.warn(
+                            "[Jukebox] Audio shutdown took {} ms at {}",
+                            elapsedMs, player.pos
+                    );
+                }
+            }
+        }, "mdr-jukebox-close-" + player.pos);
+
+        cleanupThread.setDaemon(true);
+        cleanupThread.start();
     }
 
-    // Вызывать при отключении от мира/сервера — останавливает все играющие кастомные пластинки
-    // сразу, а не только одну.
     public static void stopAll() {
-        for (BlockPos pos : activeByPos.keySet()) {
-            stop(pos);
-        }
+        for (BlockPos pos : Map.copyOf(activeByPos).keySet()) stop(pos);
     }
 
-    // Вызывать из общего клиентского тик-лупа — пересчитывает громкость/панораму по дистанции для
-    // каждого играющего экземпляра и следит, не вытащили ли соответствующую пластинку/не сломали
-    // ли блок (доигрывание файла до конца отслеживает сам поток воспроизведения — см.
-    // finishCleanup()).
     public static void tick(Minecraft client, int detectionRadius) {
-        if (activeByPos.isEmpty()) return;
         if (client.level == null || client.player == null) {
             stopAll();
             return;
         }
-
         for (PositionalCustomTrackPlayer player : activeByPos.values()) {
             player.tickOne(client, detectionRadius);
         }
     }
 
-    private void tickOne(Minecraft client, int detectionRadius) {
-        if (--scanCountdown > 0) return;
-        scanCountdown = SCAN_INTERVAL_TICKS;
-
-        if (!client.level.isLoaded(pos)) {
-            // Чанк не загружен — мы не можем достоверно узнать, стоит ли ещё пластинка в блоке.
-            // Считаем, что стоит, и просто ставим воспроизведение на паузу вместо полной
-            // остановки — трек не сбрасывается и не теряет место при возвращении игрока.
-            paused = true;
+    private void tickOne(Minecraft client, int radius) {
+        if (client.level == null || client.player == null) {
+            stop(pos);
             return;
         }
+        if (!client.level.isLoaded(pos)) {
+            paused = true;
+            targetGain = 0;
+            JukeboxDuckController.onJukeboxSoundStop(pos);
+            return;
+        }
+        var state = client.level.getBlockState(pos);
+        boolean hasRecord = state.is(Blocks.JUKEBOX)
+                && state.hasProperty(JukeboxBlock.HAS_RECORD)
+                && state.getValue(JukeboxBlock.HAS_RECORD);
 
-        BlockState state = client.level.getBlockState(pos);
-        if (!state.is(Blocks.JUKEBOX) || !state.hasProperty(JukeboxBlock.HAS_RECORD) || !state.getValue(JukeboxBlock.HAS_RECORD)) {
-            // Чанк загружен, и мы точно видим, что пластинки нет/это не проигрыватель —
-            // здесь уже действительно останавливаем (это не про выгрузку, а про реальное
-            // вытаскивание/поломку блока).
+        if (!hasRecord) {
+            if (!recordStateConfirmed) {
+                paused = true;
+                targetGain = 0.0f;
+
+                if (--recordStateWaitTicks > 0) {
+                    return;
+                }
+
+                MusicDelayReducer.LOGGER.warn(
+                        "[Jukebox] Start cancelled: record state was not received at {}. State: {}",
+                        pos, state
+                );
+            }
+
             stop(pos);
             return;
         }
 
-        // Каждый раз, когда мы заново достоверно убедились, что пластинка на месте (в т.ч. после
-        // возврата из выгруженного чанка), на всякий случай заново регистрируем позицию в
-        // JukeboxDuckController — идемпотентно (просто добавление в Set), но подстраховывает от
-        // любой причины, по которой запись могла выпасть из списка, пока чанк был выгружен.
+        if (!recordStateConfirmed) {
+            recordStateConfirmed = true;
+            MusicDelayReducer.LOGGER.info(
+                    "[Jukebox] Record confirmed, enabling playback at {}", pos
+            );
+        }
+
+        paused = client.isPaused();
         JukeboxDuckController.onJukeboxSoundStart(pos);
-        paused = false;
 
-        // Затухание по дистанции: не прямая линия, а квадратичная кривая — громкость держится
-        // высокой большую часть радиуса и падает быстрее только ближе к его краю, это ближе к
-        // тому, как звук воспринимается на слух в реальности.
-        double distance = Math.sqrt(pos.distSqr(client.player.blockPosition()));
-        double normalizedDistance = Math.min(1.0, distance / detectionRadius);
-        float distanceGain = (float) (1.0 - normalizedDistance * normalizedDistance);
-
-        // Игровые настройки громкости ("Пластинки" + "Общая") должны действовать на этот трек
-        // так же, как на любой другой звук в игре — сам вывод у нас отдельный от движка, поэтому
-        // применяем эти множители вручную.
-        float settingsVolume = client.options.getSoundSourceVolume(SoundSource.MASTER)
+        // Use the same distance convention as JukeboxDuckController.
+        double normalized = Math.min(1.0,
+                Math.sqrt(pos.distSqr(client.player.blockPosition())) / Math.max(1, radius));
+        targetGain = (float) (1.0 - normalized * normalized)
+                * client.options.getSoundSourceVolume(SoundSource.MASTER)
                 * client.options.getSoundSourceVolume(SoundSource.RECORDS);
 
-        targetGain = distanceGain * settingsVolume;
-
-        // Панорама: угол между направлением взгляда игрока и направлением на блок. 0° — блок
-        // прямо по курсу (по центру). Ограничиваем максимальный уход в сторону — в реальности
-        // даже строго сбоку звук слышен тише, а не полностью пропадает в одном ухе.
-        double dx = (pos.getX() + 0.5) - client.player.getX();
-        double dz = (pos.getZ() + 0.5) - client.player.getZ();
-        double angleToTarget = Math.toDegrees(Math.atan2(-dx, dz));
-        double relative = Mth.wrapDegrees(angleToTarget - client.player.getYRot());
-        float rawPan = (float) Math.sin(Math.toRadians(relative));
-        targetPan = Math.max(-MAX_PAN, Math.min(MAX_PAN, rawPan));
+        double dx = pos.getX() + 0.5 - client.player.getX();
+        double dz = pos.getZ() + 0.5 - client.player.getZ();
+        double horizontal = Math.hypot(dx, dz);
+        double yaw = Math.toRadians(client.player.getYRot());
+        // Positive pan means right; at yaw=0, west is to the player's right.
+        double right = horizontal < 0.0001 ? 0 : (-dx * Math.cos(yaw) - dz * Math.sin(yaw)) / horizontal;
+        targetPan = (float) Math.max(-MAX_PAN, Math.min(MAX_PAN, right));
     }
 
     private void runLoop() {
-        byte[] buffer = new byte[BUFFER_FRAMES * track.getChannels() * 2];
-        while (!stopRequested) {
-            if (paused) {
-                try {
-                    Thread.sleep(200);
-                } catch (InterruptedException ignored) {
+        byte[] input = new byte[BUFFER_FRAMES * track.getChannels() * 2];
+        byte[] output = new byte[BUFFER_FRAMES * 4];
+        boolean ended = false;
+        boolean linePaused = false;
+        try {
+            if (!stopRequested) line.start();
+            while (!stopRequested) {
+                if (paused) {
+                    if (!linePaused) {
+                        line.stop();
+                        linePaused = true;
+                    }
+                    Thread.sleep(20);
+                    continue;
                 }
-                continue;
-            }
-
-            int read = track.read(buffer);
-            if (read < 0) break; // файл доиграл до конца сам по себе
-
-            boolean stereo = track.getChannels() == 2;
-            int bytesPerFrame = stereo ? 4 : 2;
-            int frames = read / bytesPerFrame;
-
-            float startGain = currentGain;
-            float endGain = targetGain;
-            float startPan = currentPan;
-            float endPan = targetPan;
-
-            for (int frame = 0; frame < frames; frame++) {
-                float t = frames <= 1 ? 1f : (float) frame / (frames - 1);
-                float g = startGain + (endGain - startGain) * t;
-                int i = frame * bytesPerFrame;
-
-                if (stereo) {
-                    // Constant-power pan law: при pan=0 оба канала на полной громкости, при уходе
-                    // в сторону один канал растёт, другой снижается — но не до нуля, так как pan
-                    // ограничен константой MAX_PAN.
-                    float pan = startPan + (endPan - startPan) * t;
-                    double angle = (pan + 1.0) * (Math.PI / 4.0); // 0..PI/2
-                    float leftMul = g * (float) Math.cos(angle);
-                    float rightMul = g * (float) Math.sin(angle);
-
-                    int left = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
-                    int right = (short) ((buffer[i + 2] & 0xFF) | (buffer[i + 3] << 8));
-                    left = clamp16(Math.round(left * leftMul));
-                    right = clamp16(Math.round(right * rightMul));
-                    buffer[i] = (byte) (left & 0xFF);
-                    buffer[i + 1] = (byte) ((left >> 8) & 0xFF);
-                    buffer[i + 2] = (byte) (right & 0xFF);
-                    buffer[i + 3] = (byte) ((right >> 8) & 0xFF);
-                } else {
-                    int sample = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
-                    sample = clamp16(Math.round(sample * g));
-                    buffer[i] = (byte) (sample & 0xFF);
-                    buffer[i + 1] = (byte) ((sample >> 8) & 0xFF);
+                if (linePaused) {
+                    line.start();
+                    linePaused = false;
+                }
+                int read = track.read(input);
+                if (read < 0) { ended = true; break; }
+                int channels = track.getChannels();
+                int frames = read / (channels * 2);
+                float nextGain = targetGain;
+                float nextPan = targetPan;
+                for (int frame = 0; frame < frames; frame++) {
+                    float t = (frame + 1f) / frames;
+                    float gain = currentGain + (nextGain - currentGain) * t;
+                    float pan = currentPan + (nextPan - currentPan) * t;
+                    double angle = (pan + 1.0) * Math.PI / 4.0;
+                    int offset = frame * channels * 2;
+                    int left = sample(input, offset);
+                    int right = channels == 2 ? sample(input, offset + 2) : left;
+                    put(output, frame * 4, Math.round(left * gain * (float) Math.cos(angle)));
+                    put(output, frame * 4 + 2, Math.round(right * gain * (float) Math.sin(angle)));
+                }
+                currentGain = nextGain;
+                currentPan = nextPan;
+                int offset = 0;
+                while (!stopRequested && offset < frames * 4) {
+                    int written = line.write(output, offset, frames * 4 - offset);
+                    if (written <= 0) break;
+                    offset += written;
                 }
             }
-
-            currentGain = endGain;
-            currentPan = endPan;
-
-            line.write(buffer, 0, read);
+            if (ended && !stopRequested) line.drain();
+        } catch (Exception e) {
+            if (!stopRequested) MusicDelayReducer.LOGGER.error("Jukebox playback failed", e);
+        } finally {
+            line.close();
+            track.close();
+            // Keep map and duck registration changes on the game thread.
+            Minecraft.getInstance().execute(() -> {
+                if (activeByPos.remove(pos, this)) JukeboxDuckController.onJukeboxSoundStop(pos);
+            });
         }
-
-        line.drain();
-        line.close();
-        track.close();
-        finishCleanup();
     }
 
-    private static int clamp16(int sample) {
-        return Math.max(-32768, Math.min(32767, sample));
+    private static int sample(byte[] bytes, int offset) {
+        return (short) ((bytes[offset] & 255) | (bytes[offset + 1] << 8));
     }
 
-    private void finishCleanup() {
-        if (activeByPos.get(pos) == this) {
-            activeByPos.remove(pos);
-            JukeboxDuckController.onJukeboxSoundStop(pos);
-        }
+    private static void put(byte[] bytes, int offset, int value) {
+        value = Math.max(-32768, Math.min(32767, value));
+        bytes[offset] = (byte) value;
+        bytes[offset + 1] = (byte) (value >> 8);
     }
 }

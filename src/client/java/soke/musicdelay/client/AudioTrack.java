@@ -1,81 +1,75 @@
 package soke.musicdelay.client;
 
 import javax.sound.sampled.*;
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
 
 public class AudioTrack {
-
     private final AudioInputStream stream;
     private final float sampleRate;
     private final int channels;
-    private volatile boolean finished = false;
+    private volatile boolean finished;
 
-    private AudioTrack(AudioInputStream stream, float sampleRate, int channels) {
+    private AudioTrack(AudioInputStream stream) {
         this.stream = stream;
-        this.sampleRate = sampleRate;
-        this.channels = channels;
+        this.sampleRate = stream.getFormat().getSampleRate();
+        this.channels = stream.getFormat().getChannels();
     }
 
     public static AudioTrack open(Path file) throws Exception {
-        AudioInputStream raw = AudioSystem.getAudioInputStream(file.toFile());
-        AudioFormat srcFormat = raw.getFormat();
+        return decode(AudioSystem.getAudioInputStream(file.toFile()));
+    }
 
-        AudioInputStream converted;
-        if (srcFormat.getEncoding() == AudioFormat.Encoding.PCM_SIGNED && srcFormat.getSampleSizeInBits() == 16) {
-            converted = raw;
-        } else {
-            AudioFormat pcmFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    srcFormat.getSampleRate(),
-                    16,
-                    srcFormat.getChannels(),
-                    srcFormat.getChannels() * 2,
-                    srcFormat.getSampleRate(),
-                    false
-            );
-            if (!AudioSystem.isConversionSupported(pcmFormat, srcFormat)) {
-                throw new UnsupportedAudioFileException("Cannot decode " + file + " (" + srcFormat + ") to PCM16");
-            }
-            converted = AudioSystem.getAudioInputStream(pcmFormat, raw);
+    // Ownership of input passes to AudioTrack, including on failure.
+    public static AudioTrack open(InputStream input) throws Exception {
+        BufferedInputStream buffered = new BufferedInputStream(input);
+        try {
+            return decode(AudioSystem.getAudioInputStream(buffered));
+        } catch (Exception e) {
+            try { buffered.close(); } catch (IOException ignored) {}
+            throw e;
         }
-
-        AudioFormat finalFormat = converted.getFormat();
-        return new AudioTrack(converted, finalFormat.getSampleRate(), finalFormat.getChannels());
     }
 
-    public float getSampleRate() {
-        return sampleRate;
+    private static AudioTrack decode(AudioInputStream raw) throws Exception {
+        try {
+            AudioFormat source = raw.getFormat();
+            if (source.getChannels() < 1 || source.getChannels() > 2) {
+                throw new UnsupportedAudioFileException("Only mono and stereo are supported");
+            }
+            AudioFormat target = new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,
+                    source.getSampleRate(), 16, source.getChannels(),
+                    source.getChannels() * 2, source.getSampleRate(), false);
+            if (target.matches(source)) return new AudioTrack(raw);
+            if (!AudioSystem.isConversionSupported(target, source)) {
+                throw new UnsupportedAudioFileException("Cannot decode to PCM16: " + source);
+            }
+            return new AudioTrack(AudioSystem.getAudioInputStream(target, raw));
+        } catch (Exception e) {
+            try { raw.close(); } catch (IOException ignored) {}
+            throw e;
+        }
     }
 
-    public int getChannels() {
-        return channels;
-    }
-
-    private int readCallCount = 0;
+    public float getSampleRate() { return sampleRate; }
+    public int getChannels() { return channels; }
+    public boolean isFinished() { return finished; }
 
     public int read(byte[] buffer) {
         try {
             int frameBytes = channels * 2;
-            int usableLength = buffer.length - (buffer.length % frameBytes);
-            int read;
-            do {
-                read = stream.read(buffer, 0, usableLength);
-            } while (read == 0);
-
-            if (read < 0) {
-                finished = true;
-                return -1;
-            }
-            return read;
+            int length = buffer.length - buffer.length % frameBytes;
+            if (length == 0) throw new IllegalArgumentException("Buffer is smaller than one frame");
+            int count;
+            do { count = stream.read(buffer, 0, length); } while (count == 0);
+            if (count < 0) finished = true;
+            return count;
         } catch (IOException e) {
             finished = true;
             return -1;
         }
-    }
-
-    public boolean isFinished() {
-        return finished;
     }
 
     public void close() {
