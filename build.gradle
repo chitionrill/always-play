@@ -16,6 +16,11 @@ repositories {
 
 loom {
 	splitEnvironmentSourceSets()
+	runs {
+		server {
+			runDir "run-server"
+		}
+	}
 
 	mods {
 		"music-delay-reducer" {

@@ -20,6 +20,7 @@ import net.minecraft.world.level.block.JukeboxBlock;
 import net.minecraft.world.level.block.entity.JukeboxBlockEntity;
 import net.minecraft.world.level.storage.LevelResource;
 import soke.musicdelay.MusicDelayReducer;
+import soke.musicdelay.ModConfig;
 import soke.musicdelay.network.RecordCustomDataPayload;
 import soke.musicdelay.network.SharedMusicPacket;
 
@@ -36,9 +37,34 @@ public final class SharedJukeboxServer {
             new ArrayBlockingQueue<>(16), r -> { Thread t = new Thread(r, "always-play-server-files"); t.setDaemon(true); return t; });
     private final Set<String> stored = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Upload> uploads = new HashMap<>();
+    private final Map<UUID, RecordingReservation> reservations = new HashMap<>();
     private final Map<UUID, Download> downloads = new HashMap<>();
     private final Map<UUID, LoadRequest> loading = new HashMap<>();
     private final Map<UUID, LinkedHashMap<String, Long>> offers = new HashMap<>();
+    private final Map<UUID, LinkedHashMap<String, ClientPreparation>> preparations = new HashMap<>();
+    private final Map<UUID, PendingInsertion> pendingInsertions = new HashMap<>();
+
+    private static final class ClientPreparation {
+        final String token = UUID.randomUUID().toString();
+        int percent;
+        long updated = -10000;
+        long requested = -10000;
+    }
+    private static final class PendingInsertion {
+        final String id = UUID.randomUUID().toString();
+        final ServerLevel level;
+        final BlockPos pos;
+        final CustomRecordData record;
+        final ItemStack expected;
+        final int slot;
+        final long created;
+        int lastPercent = Integer.MIN_VALUE;
+        long lastSent;
+        PendingInsertion(ServerPlayer owner, ServerLevel level, BlockPos pos, CustomRecordData record, long ticks) {
+            this.level = level; this.pos = pos.immutable(); this.record = record;
+            expected = owner.getMainHandItem().copy(); slot = owner.getInventory().getSelectedSlot(); created = ticks;
+        }
+    }
     private static final int MAX_OFFERS = 128;
     private static final long OFFER_LIFETIME = 2400;
 
@@ -53,11 +79,11 @@ public final class SharedJukeboxServer {
     private long ticks;
 
     private static final class Upload {
-        final String hash; final String token; final String title; final String composer; final ItemStack expected;
-        final int slot; final byte[] bytes; final long duration; int received; int lastPercent = -1; long touched; boolean saving;
+        final String hash; final String token; final String title; final String composer;
+        final byte[] bytes; final long duration; int received; int lastPercent = -1; long touched; boolean saving;
         Upload(ServerPlayer p, SharedMusicPacket packet, long tick) {
             hash = packet.id(); token = packet.value(); title = packet.title(); composer = packet.composer();
-            expected = p.getMainHandItem().copy(); slot = p.getInventory().getSelectedSlot();
+
             bytes = new byte[packet.total()]; touched = tick; duration = packet.number();
         }
     }
@@ -104,11 +130,13 @@ public final class SharedJukeboxServer {
     private static void send(ServerPlayer player, SharedMusicPacket packet) {
         if (ServerPlayNetworking.canSend(player, SharedMusicPacket.TYPE)) ServerPlayNetworking.send(player, packet);
     }
-    private static void rejectUpload(ServerPlayer player, SharedMusicPacket packet, String key) {
+    private void rejectUpload(ServerPlayer player, SharedMusicPacket packet, String key) {
+        releaseReservation(player, packet.value());
         tell(player, key); send(player, SharedMusicPacket.simple("upload_rejected", packet.id(), packet.value()));
     }
 
-    private static void failUpload(ServerPlayer player, Upload upload, String key) {
+    private void failUpload(ServerPlayer player, Upload upload, String key) {
+        releaseReservation(player, upload.token);
         tell(player, key);
         send(player, SharedMusicPacket.simple("upload_rejected", upload.hash, upload.token));
     }
@@ -120,6 +148,7 @@ public final class SharedJukeboxServer {
         ServerLifecycleEvents.SERVER_STARTED.register(s -> current = new SharedJukeboxServer(s));
         ServerLifecycleEvents.SERVER_STOPPING.register(s -> {
             if (current != null && current.server == s) {
+                for (ServerPlayer player : s.getPlayerList().getPlayers()) current.releaseReservation(player);
                 current.alive = false; current.io.shutdownNow(); current.uploads.clear();
                 current.downloads.clear(); current.sessions.clear(); current = null;
             }
@@ -128,8 +157,10 @@ public final class SharedJukeboxServer {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, s) -> {
             if (current != null) {
                 UUID id = handler.player.getUUID();
+                current.releaseReservation(handler.player);
                 current.uploads.remove(id); current.downloads.remove(id); current.loading.remove(id);
                 current.nextUpload.remove(id); current.offers.remove(id);
+                current.preparations.remove(id); current.pendingInsertions.remove(id);
             }
         });
         ServerPlayNetworking.registerGlobalReceiver(SharedMusicPacket.TYPE, (packet, context) ->
@@ -149,6 +180,7 @@ public final class SharedJukeboxServer {
             if (!current.valid(data, world)) { tell(p, "missing_track"); return InteractionResult.FAIL; }
             if (current.sessions.size() >= 128) { tell(p, "busy"); return InteractionResult.FAIL; }
             if (!(world.getBlockEntity(pos) instanceof JukeboxBlockEntity box)) return InteractionResult.PASS;
+            if (!current.readyToInsert(p, world, pos, data)) return InteractionResult.SUCCESS;
             // A new disc at the same position always ends the previous session first.
             current.sessions.removeIf(session -> {
                 if (session.level != world || !session.pos.equals(pos)) return false;
@@ -188,7 +220,9 @@ public final class SharedJukeboxServer {
     }
     private void commit(ServerPlayer p, CustomRecordData data) { commit(p, data, true); }
     private void commit(ServerPlayer p, CustomRecordData data, boolean notifyInChat) {
-        ItemStack held = p.getMainHandItem();
+        commit(p, data, notifyInChat, p.getMainHandItem());
+    }
+    private void commit(ServerPlayer p, CustomRecordData data, boolean notifyInChat, ItemStack held) {
         data.writeTo(held); held.remove(DataComponents.JUKEBOX_PLAYABLE);
         held.set(DataComponents.CUSTOM_NAME, Component.translatable("music-delay-reducer.record.default_name"));
         List<Component> lore = new ArrayList<>();
@@ -199,19 +233,84 @@ public final class SharedJukeboxServer {
         if (data.trackType().equals("SHARED")) announceTrack(data.trackValue());
     }
 
+    private ItemStack recordingTarget(ServerPlayer player, String token) {
+        RecordingReservation reservation = reservations.get(player.getUUID());
+        return reservation != null && reservation.token.equals(token) ? reservation.find(player) : null;
+    }
+
+    private void releaseReservation(ServerPlayer player, String token) {
+        RecordingReservation reservation = reservations.get(player.getUUID());
+        if (reservation != null && reservation.token.equals(token)) releaseReservation(player);
+    }
+
+    private void releaseReservation(ServerPlayer player) {
+        RecordingReservation reservation = reservations.remove(player.getUUID());
+        if (reservation != null) reservation.clear(player);
+    }
+
+    private void cancelRecording(ServerPlayer player, String token, String reason) {
+        RecordingReservation reservation = reservations.get(player.getUUID());
+        if (reservation == null || !reservation.token.equals(token)) return;
+        uploads.remove(player.getUUID()); releaseReservation(player);
+        send(player, SharedMusicPacket.simple("record_cancelled", token, reason));
+    }
+
+    private void tickReservations() {
+        for (var entry : Map.copyOf(reservations).entrySet()) {
+            ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+            RecordingReservation reservation = entry.getValue();
+            if (player == null) { reservations.remove(entry.getKey()); uploads.remove(entry.getKey()); continue; }
+            if (reservation.find(player) == null) cancelRecording(player, reservation.token, "recording_cancelled");
+            else if (!uploads.containsKey(entry.getKey()) && ticks - reservation.created > 2400)
+                cancelRecording(player, reservation.token, "transfer_failed");
+        }
+    }
+
     private void receive(ServerPlayer p, SharedMusicPacket packet) {
         if (!ServerPlayNetworking.canSend(p, SharedMusicPacket.TYPE)) return;
         UUID id = p.getUUID();
         switch (packet.action()) {
+            case "prepare_status" -> {
+                var known = preparations.get(id);
+                ClientPreparation status = known == null ? null : known.get(packet.id());
+                if (status != null && status.token.equals(packet.value()) && allowed(p, packet.id())
+                        && packet.number() >= -1 && packet.number() <= 100) {
+                    status.percent = (int) packet.number(); status.updated = ticks;
+                }
+            }
+            case "reserve_record" -> {
+                try { UUID.fromString(packet.id()); } catch (IllegalArgumentException e) { return; }
+                if (reservations.containsKey(id) || uploads.containsKey(id)) {
+                    send(p, SharedMusicPacket.simple("record_cancelled", packet.id(), "busy")); return;
+                }
+                int slot = packet.total();
+                if (slot < 0 || slot >= p.getInventory().getContainerSize()) return;
+                ItemStack target = p.getInventory().getItem(slot);
+                if (!clean(target) || target.getCount() != 1) {
+                    send(p, SharedMusicPacket.simple("record_cancelled", packet.id(), "hold_disc")); return;
+                }
+                reservations.put(id, new RecordingReservation(target, packet.id(), ticks));
+                p.containerMenu.broadcastChanges();
+                send(p, SharedMusicPacket.simple("record_reserved", packet.id(), ""));
+            }
+            case "record_cancel" -> {
+                RecordingReservation reservation = reservations.get(id);
+                if (reservation != null && reservation.token.equals(packet.id())) {
+                    uploads.remove(id); releaseReservation(p);
+                }
+            }
             case "record_builtin" -> {
-                if (!clean(p.getMainHandItem()) || p.getMainHandItem().getCount() != 1
-                        || p.getInventory().getSelectedSlot() != packet.total()) { tell(p, "hold_disc"); return; }
-                CustomRecordData data = new CustomRecordData("VANILLA", packet.value(), packet.title(), packet.composer(), packet.number());
-                if (!valid(data, (ServerLevel) p.level())) { tell(p, "missing_track"); return; }
-                commit(p, data);
+                ItemStack target = recordingTarget(p, packet.id());
+                if (target == null) { cancelRecording(p, packet.id(), "recording_cancelled"); return; }
+                boolean disc = packet.value().startsWith("disc:");
+                CustomRecordData data = new CustomRecordData(disc ? "VANILLA_DISC" : "VANILLA",
+                        disc ? packet.value().substring(5) : packet.value(), packet.title(), packet.composer(), packet.number());
+                if (!valid(data, (ServerLevel) p.level())) { cancelRecording(p, packet.id(), "missing_track"); return; }
+                commit(p, data, true, target); releaseReservation(p);
+                send(p, SharedMusicPacket.simple("record_complete", packet.id(), ""));
             }
             case "upload_begin" -> {
-                if (!clean(p.getMainHandItem()) || p.getMainHandItem().getCount() != 1) { rejectUpload(p, packet, "hold_disc"); return; }
+                if (recordingTarget(p, packet.value()) == null) { rejectUpload(p, packet, "recording_cancelled"); return; }
                 if (!SharedMusicFiles.validHash(packet.id()) || packet.total() <= 0 || packet.total() > SharedMusicPacket.MAX_FILE
                         || packet.number() <= 0 || packet.number() > 1_800_000L) { rejectUpload(p, packet, "transfer_failed"); return; }
                 if (uploads.size() >= 4 || uploads.containsKey(id) || ticks < nextUpload.getOrDefault(id, 0L)) { rejectUpload(p, packet, "busy"); return; }
@@ -243,11 +342,12 @@ public final class SharedJukeboxServer {
                                 if (!alive) return;
                                 stored.add(upload.hash);
                                 if (uploads.remove(id, upload) && server.getPlayerList().getPlayer(id) == p) {
-                                    if (p.getInventory().getSelectedSlot() == upload.slot
-                                            && ItemStack.matches(p.getMainHandItem(), upload.expected) && clean(p.getMainHandItem())) {
-                                        commit(p, new CustomRecordData("SHARED", upload.hash, upload.title, upload.composer, upload.duration), upload.token.isEmpty());
+                                    ItemStack target = recordingTarget(p, upload.token);
+                                    if (target != null) {
+                                        commit(p, new CustomRecordData("SHARED", upload.hash, upload.title, upload.composer, upload.duration), false, target);
+                                        releaseReservation(p);
                                         send(p, SharedMusicPacket.simple("upload_complete", upload.hash, upload.token));
-                                    } else failUpload(p, upload, "hold_disc");
+                                    } else failUpload(p, upload, "recording_cancelled");
                                 }
                             });
                         } catch (Exception e) {
@@ -324,9 +424,13 @@ public final class SharedJukeboxServer {
             Long previous = known.get(hash);
             if (previous != null && ticks - previous < 100) continue;
             known.remove(hash);
-            if (known.size() >= MAX_OFFERS) known.remove(known.keySet().iterator().next());
+            if (known.size() >= MAX_OFFERS) {
+                String oldest = known.keySet().iterator().next(); known.remove(oldest);
+                var states = preparations.get(player.getUUID());
+                if (states != null) states.remove(oldest);
+            }
             known.put(hash, ticks);
-            send(player, SharedMusicPacket.simple("prefetch", hash, ""));
+            send(player, SharedMusicPacket.simple("prefetch", hash, preparation(player, hash, false).token));
         }
     }
 
@@ -347,7 +451,98 @@ public final class SharedJukeboxServer {
         hashes.forEach(this::announceTrack);
     }
 
+    private ClientPreparation preparation(ServerPlayer player, String hash, boolean retryFailure) {
+        var known = preparations.computeIfAbsent(player.getUUID(), ignored -> new LinkedHashMap<>());
+        ClientPreparation status = known.get(hash);
+        if (status == null || (retryFailure && status.percent < 0)) {
+            if (known.size() >= MAX_OFFERS) known.remove(known.keySet().iterator().next());
+            status = new ClientPreparation(); known.put(hash, status);
+        }
+        return status;
+    }
+
+    private Set<ServerPlayer> nearbyListeners(ServerPlayer owner, PendingInsertion wait) {
+        int radius = Math.clamp(ModConfig.get().jukeboxDetectionRadius, 1, 512);
+        double radiusSq = (double) radius * radius;
+        Set<ServerPlayer> listeners = new HashSet<>();
+        listeners.add(owner);
+        for (ServerPlayer player : PlayerLookup.tracking(wait.level, wait.pos)) {
+            if (player.level() == wait.level && player.blockPosition().distSqr(wait.pos) <= radiusSq
+                    && ServerPlayNetworking.canSend(player, SharedMusicPacket.TYPE)) listeners.add(player);
+        }
+        return listeners;
+    }
+
+    private int preparationPercent(ServerPlayer owner, PendingInsertion wait, boolean retryFailure) {
+        int minimum = 100;
+        for (ServerPlayer player : nearbyListeners(owner, wait)) {
+            String hash = wait.record.trackValue();
+            ClientPreparation status = preparation(player, hash, retryFailure);
+            int percent = ticks - status.updated <= 200 ? status.percent : 0;
+            minimum = Math.min(minimum, percent);
+            if (ticks - status.requested >= 20) {
+                status.requested = ticks;
+                send(player, SharedMusicPacket.simple("prepare_track", hash, status.token));
+            }
+        }
+        return minimum;
+    }
+
+    private void sendWait(ServerPlayer owner, PendingInsertion wait, int percent) {
+        if (wait.lastPercent == percent && (percent < 0 || percent == 100 || ticks - wait.lastSent < 20)) return;
+        wait.lastPercent = percent; wait.lastSent = ticks;
+        send(owner, new SharedMusicPacket("wait_progress", wait.id, "", "", "", wait.pos, percent, 0, new byte[0]));
+    }
+
+    private boolean readyToInsert(ServerPlayer owner, ServerLevel level, BlockPos pos, CustomRecordData record) {
+        if (!record.trackType().equals("SHARED")) return true;
+        PendingInsertion wait = pendingInsertions.get(owner.getUUID());
+        if (wait == null || wait.level != level || !wait.pos.equals(pos) || !wait.record.equals(record)) {
+            if (wait == null && pendingInsertions.size() >= 128) { tell(owner, "busy"); return false; }
+            wait = new PendingInsertion(owner, level, pos, record, ticks);
+            pendingInsertions.put(owner.getUUID(), wait);
+        }
+        int percent = preparationPercent(owner, wait, true);
+        if (percent == 100) {
+            pendingInsertions.remove(owner.getUUID());
+            send(owner, SharedMusicPacket.simple("wait_clear", wait.id, ""));
+            return true;
+        }
+        sendWait(owner, wait, percent);
+        return false;
+    }
+
+    private void tickPendingInsertions() {
+        if (ticks % 5 != 0) return;
+        for (var it = pendingInsertions.entrySet().iterator(); it.hasNext();) {
+            var entry = it.next(); PendingInsertion wait = entry.getValue();
+            ServerPlayer owner = server.getPlayerList().getPlayer(entry.getKey());
+            if (owner == null) { it.remove(); continue; }
+            boolean cancelled = owner.level() != wait.level || owner.blockPosition().distSqr(wait.pos) > 64
+                    || owner.getInventory().getSelectedSlot() != wait.slot || !ItemStack.matches(owner.getMainHandItem(), wait.expected);
+            if (!cancelled) {
+                if (!wait.level.isLoaded(wait.pos)) cancelled = true;
+                else {
+                    var state = wait.level.getBlockState(wait.pos);
+                    cancelled = !state.is(Blocks.JUKEBOX) || state.getValue(JukeboxBlock.HAS_RECORD);
+                }
+            }
+            if (cancelled) {
+                send(owner, SharedMusicPacket.simple("wait_clear", wait.id, "")); it.remove(); continue;
+            }
+            int percent = ticks - wait.created >= 2400 ? -1 : preparationPercent(owner, wait, false);
+            sendWait(owner, wait, percent);
+            // Readiness never inserts a disc automatically; another click is required.
+            if (percent < 0) it.remove();
+        }
+    }
+
     private boolean allowed(ServerPlayer player, String hash) {
+        for (var entry : pendingInsertions.entrySet()) {
+            PendingInsertion wait = entry.getValue();
+            ServerPlayer owner = server.getPlayerList().getPlayer(entry.getKey());
+            if (owner != null && wait.record.trackValue().equals(hash) && nearbyListeners(owner, wait).contains(player)) return true;
+        }
         var known = offers.get(player.getUUID());
         if (known != null && ticks - known.getOrDefault(hash, -OFFER_LIFETIME) < OFFER_LIFETIME) return true;
         return sessions.stream().anyMatch(s -> s.record.trackType().equals("SHARED") && s.record.trackValue().equals(hash)
@@ -361,7 +556,9 @@ public final class SharedJukeboxServer {
     }
     private void tick() {
         ticks++;
+        tickReservations();
         if (ticks % 100 == 1) announceInventoryTracks();
+        tickPendingInsertions();
         uploads.entrySet().removeIf(e -> {
             if (ticks - e.getValue().touched < 2400) return false;
             ServerPlayer p = server.getPlayerList().getPlayer(e.getKey());
