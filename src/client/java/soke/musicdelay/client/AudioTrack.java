@@ -24,7 +24,9 @@ public class AudioTrack {
 
     // Ownership of input passes to AudioTrack, including on failure.
     public static AudioTrack open(InputStream input) throws Exception {
-        BufferedInputStream buffered = new BufferedInputStream(input);
+        InputStream buffered = input.markSupported()
+                ? input
+                : new BufferedInputStream(input);
         try {
             return decode(AudioSystem.getAudioInputStream(buffered));
         } catch (Exception e) {

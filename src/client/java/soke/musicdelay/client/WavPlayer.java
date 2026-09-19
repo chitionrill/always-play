@@ -214,7 +214,7 @@ public class WavPlayer {
                 AudioTrack t = AudioTrack.open(file);
                 finalFuture.complete(t);
             } catch (Exception e) {
-                e.printStackTrace();
+                soke.musicdelay.MusicDelayReducer.LOGGER.warn("Cannot preload audio file: " + file, e);
                 finalFuture.completeExceptionally(e);
             } finally {
                 synchronized (preloadMapLock) {

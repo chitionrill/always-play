@@ -58,29 +58,7 @@ public class RecordMetadataScreen extends Screen {
         String composer = composerBox.getValue().trim();
         if (title.isEmpty()) title = track.displayName.getString();
 
-        Playlist.PlaylistEntry entry = track.toPlaylistEntry();
-        String type = entry.type;
-        String value = entry.value;
-
-        // Для настоящих "дисков" (не фоновой музыки) шлём не путь к аудиофайлу, а id самой
-        // записи JukeboxSong в реестре игры — именно это нужно JukeboxSongPlayer.play(...) на
-        // сервере, чтобы воспроизвести трек так же, как обычную вставленную пластинку.
-        if (track.kind == BrowsableTrack.Kind.DISC) {
-            net.minecraft.resources.Identifier soundLocation = net.minecraft.resources.Identifier.parse(entry.value);
-            net.minecraft.resources.Identifier songId =
-                    soke.musicdelay.client.VanillaTrackRegistry.getJukeboxSongIdForSoundLocation(soundLocation);
-            if (songId != null) {
-                type = "VANILLA_DISC";
-                value = songId.toString();
-            }
-        } else if (track.kind == BrowsableTrack.Kind.AMBIENT) {
-            type = "VANILLA";
-            value = "track:" + entry.value;
-        }
-
-        ClientPlayNetworking.send(new RecordCustomDataPayload(type, value, title, composer));
-
-        CustomTrackToast.showTrack(Component.translatable("music-delay-reducer.record.saved_toast", title));
+        soke.musicdelay.client.jukebox.SharedJukeboxClient.record(track, title, composer);
         this.minecraft.gui.setScreen(null);
     }
 

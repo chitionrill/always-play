@@ -8,8 +8,8 @@
 		"SokeDev"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/chitionrill/always-play",
+		"sources": "https://github.com/chitionrill/always-play"
 	},
 	"license": "CC-BY-NC-SA-4.0",
 	"icon": "assets/music-delay-reducer/icon.png",

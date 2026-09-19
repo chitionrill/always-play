@@ -32,9 +32,49 @@ By default, this mod reduces the pause between tracks from 10–20 minutes to ju
 - Scrollable, resizable settings screen.
 - Language support: English, Russian, Ukrainian. (Want more languages? Let me know in the comments!)
 
-## Planned Features
-- Custom playlists with specific playback order and favorites
-- A dedicated in-game music browser/player interface
+## Music library
+- In-game music browser and playlists.
+- Browse vanilla background music, music discs and your own files.
+
+## Shared custom records (network preview)
+
+This build is a testing candidate, not the final 1.2.3 release.
+
+Install the same build on the server/host and on every player who wants to hear
+or insert custom records. The ordinary client music features still work without
+the server component, but recording is disabled on unsupported servers.
+
+Rename one music disc to `Clean`, use it on a jukebox, select a track and confirm.
+Keep that disc selected until the server confirms recording. Local audio is
+uploaded in small chunks and stored with the world. A disc stores a SHA-256 track
+identifier, not the author's local path. You can give the disc to another player;
+it keeps working after its author disconnects. Recipients download the track
+when they track a playing jukebox, verify its checksum and cache it locally.
+Late listeners start near the current playback position after downloading.
+This is approximate synchronization, not sample-accurate synchronization.
+
+Vanilla background tracks refer to Minecraft resources, so they need no audio
+upload. Different resource packs can provide different audio for the same ID.
+Existing vanilla disc songs continue using Minecraft's native playback.
+
+Current limits:
+- 32 MiB per uploaded track, 30 minutes per recorded background/custom track.
+- 1 GiB audio storage per world; 512 MiB client cache. Full storage reports an
+  error rather than deleting tracks that existing records may need.
+- Up to four simultaneous uploads and four downloads on the server; two 24 KiB
+  chunks per tick per outgoing transfer; up to 16 custom audio sources per client.
+- Audio belongs to the world directory `always-play-audio`; include this folder
+  in backups and when moving the world to another server. Client downloads live
+  in `always-play-audio-cache` in the game directory.
+- Old local-file records must be recorded again to upload their audio. Old
+  ambient records containing a sound event instead of a track also need recording again.
+- After a server/world restart, eject and reinsert a disc to restart it.
+- Active playback is server-timed: returning after leaving chunk range joins the
+  current position rather than preserving a private pause for each listener.
+- Failed downloads can be retried by leaving and rejoining the world.
+
+Before publishing as stable, test LAN and a dedicated server with two independent
+clients, including transfer to a player who has no copy of the original file.
 
 ## About this mod
 
@@ -46,4 +86,4 @@ This project's own source code is licensed under the **Creative Commons Attribut
 
 You are free to share and adapt this project for non-commercial purposes, as long as you give appropriate credit and distribute your contributions under the same license.
 
-This mod also bundles a few third-party audio codec libraries (for MP3/OGG/FLAC support) under the **GNU LGPL 2.1**, unmodified. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full list — the CC BY-NC-SA terms above cover this project's own code only, not those libraries.
+This mod also bundles unmodified third-party audio codec libraries (for MP3/OGG/FLAC support). See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for their versions and licenses — the CC BY-NC-SA terms above cover this project's own code only, not those libraries.

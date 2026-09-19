@@ -25,22 +25,16 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 	private static boolean repeatOne = false; // новое
 	private static int folderRefreshCountdown = 0;
 
+	public static boolean isManuallyPaused() {
+		return paused;
+	}
+
 	@Override
 	public void onInitializeClient() {
 		ModKeybindings.register();
 		soke.musicdelay.client.jukebox.JukeboxRecordInteractionHandler.register();
 
-		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
-				soke.musicdelay.network.CustomTrackJukeboxStartPayload.TYPE,
-				(payload, context) -> context.client().execute(() ->
-						soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.startAt(
-								payload.pos(), java.nio.file.Path.of(payload.trackValue()))));
-
-		net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
-				soke.musicdelay.network.AmbientTrackJukeboxStartPayload.TYPE,
-				(payload, context) -> context.client().execute(() ->
-						soke.musicdelay.client.jukebox.AmbientJukeboxPlayer.startAt(
-								payload.pos(), payload.soundLocation())));
+		soke.musicdelay.client.jukebox.SharedJukeboxClient.register();
 		CustomTrackManager.get().refresh();
 		PlaylistManager.setActivePlaylist(ModConfig.get().activePlaylistId);
 
@@ -48,7 +42,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			// Гарантированная точка остановки при выходе из мира/отключении от сервера —
 			// не полагаемся на то, что обычный тик-цикл успеет/сможет это сделать сам.
 			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.stopAll();
-			soke.musicdelay.client.jukebox.AmbientJukeboxPlayer.stopAll();
+			soke.musicdelay.client.jukebox.SharedJukeboxClient.reset();
 			JukeboxDuckController.reset();
 		});
 
@@ -62,6 +56,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		});
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			soke.musicdelay.client.jukebox.SharedJukeboxClient.tick(client);
 			WavPlayer.tickVolumeSync();
 
 			// Логика проигрывателя пластинок — намеренно в самом начале тика, а не ниже среди
@@ -72,7 +67,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			MusicManager managerForJukebox = client.getMusicManager();
 			IMusicManagerMixin mixinForJukebox = (IMusicManagerMixin) managerForJukebox;
 			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.tick(client, ModConfig.get().jukeboxDetectionRadius);
-			soke.musicdelay.client.jukebox.AmbientJukeboxPlayer.tick(client);
+			// Shared playback is maintained before the audio controls below.
 			JukeboxDuckController.tick(client, mixinForJukebox);
 
 			VolumeKeyController.tick(client);
@@ -90,23 +85,20 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			MusicManager manager = client.getMusicManager();
 			IMusicManagerMixin mixin = (IMusicManagerMixin) manager;
 
-			// --- новое: пауза/возобновление ---
+			// Ручная пауза и приглушение пластинками учитываются независимо.
+			boolean wasPaused = paused;
 			if (ModKeybindings.pauseResume.consumeClick()) {
 				paused = !paused;
-				if (paused) {
-					WavPlayer.pause();
-					mixin.mdr$setGain(0f);
-				} else {
-					WavPlayer.resume();
-					mixin.mdr$setGain(client.options.getSoundSourceVolume(SoundSource.MUSIC));
-				}
+			}
+			JukeboxDuckController.applyPlaybackState(client, mixin);
+			if (wasPaused || paused) {
+				// Не переносим нажатия во время паузы на момент возобновления.
+				while (ModKeybindings.skipForward.consumeClick()) {}
+				while (ModKeybindings.skipBackward.consumeClick()) {}
 			}
 			if (paused) {
-				// Замораживаем весь остальной тик: не даём плейлисту/автовоспроизведению
-				// среагировать на "завершение" трека, пока мы стоим на паузе
 				return;
 			}
-			// --- конец нового ---
 
 			// --- новое: повтор одного трека ---
 			if (ModKeybindings.repeatOne.consumeClick()) {

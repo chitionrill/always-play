@@ -15,7 +15,11 @@ import net.minecraft.world.item.component.CustomData;
 //
 // Хранится на предмете через ванильный DataComponents.CUSTOM_DATA под своим namespaced-ключом
 // "always_play", чтобы не пересекаться с данными других модов/самой игры.
-public record CustomRecordData(String trackType, String trackValue, String title, String composer) {
+public record CustomRecordData(String trackType, String trackValue, String title, String composer, long durationMillis) {
+
+    public CustomRecordData(String trackType, String trackValue, String title, String composer) {
+        this(trackType, trackValue, title, composer, 1_800_000L);
+    }
 
     private static final String ROOT_KEY = "always_play";
     private static final String TYPE_KEY = "trackType";
@@ -36,7 +40,8 @@ public record CustomRecordData(String trackType, String trackValue, String title
         String type = tag.getString(TYPE_KEY).orElse("");
         String value = tag.getString(VALUE_KEY).orElse("");
         if (type.isEmpty() || value.isEmpty()) return null;
-        return new CustomRecordData(type, value, tag.getString(TITLE_KEY).orElse(""), tag.getString(COMPOSER_KEY).orElse(""));
+        return new CustomRecordData(type, value, tag.getString(TITLE_KEY).orElse(""), tag.getString(COMPOSER_KEY).orElse(""),
+                tag.getLong("durationMillis").orElse(1_800_000L));
     }
 
     public void writeTo(ItemStack stack) {
@@ -46,6 +51,7 @@ public record CustomRecordData(String trackType, String trackValue, String title
         tag.putString(VALUE_KEY, trackValue);
         tag.putString(TITLE_KEY, title == null ? "" : title);
         tag.putString(COMPOSER_KEY, composer == null ? "" : composer);
+        tag.putLong("durationMillis", durationMillis);
         root.put(ROOT_KEY, tag);
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(root));
     }

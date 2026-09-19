@@ -6,6 +6,7 @@ import net.minecraft.sounds.SoundSource;
 import soke.musicdelay.ModConfig;
 import soke.musicdelay.client.IMusicManagerMixin;
 import soke.musicdelay.client.WavPlayer;
+import soke.musicdelay.client.MusicDelayReducerClient;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,9 +59,9 @@ public class JukeboxDuckController {
             }
             if (enginePausedByDuck) {
                 enginePausedByDuck = false;
-                WavPlayer.resume();
+
             }
-            applyGain(client, mixin);
+            applyPlaybackState(client, mixin);
             return;
         }
 
@@ -76,7 +77,7 @@ public class JukeboxDuckController {
         if (duckFactor < target) {
             if (enginePausedByDuck) {
                 enginePausedByDuck = false;
-                WavPlayer.resume();
+
             }
             duckFactor = Math.min(target, duckFactor + step);
         } else if (duckFactor > target) {
@@ -87,16 +88,22 @@ public class JukeboxDuckController {
             duckFactor = 0.0f;
             if (!enginePausedByDuck) {
                 enginePausedByDuck = true;
-                WavPlayer.pause();
+
             }
         }
 
-        applyGain(client, mixin);
+        applyPlaybackState(client, mixin);
     }
 
-    private static void applyGain(Minecraft client, IMusicManagerMixin mixin) {
+    public static void applyPlaybackState(Minecraft client, IMusicManagerMixin mixin) {
+        boolean manuallyPaused = MusicDelayReducerClient.isManuallyPaused();
+        boolean shouldPause = manuallyPaused || enginePausedByDuck;
+        if (shouldPause != WavPlayer.isPaused()) {
+            if (shouldPause) WavPlayer.pause();
+            else WavPlayer.resume();
+        }
         float sliderVolume = client.options.getSoundSourceVolume(SoundSource.MUSIC);
-        mixin.mdr$setGain(sliderVolume * duckFactor);
+        mixin.mdr$setGain(manuallyPaused ? 0f : sliderVolume * duckFactor);
         WavPlayer.setDuckMultiplier(duckFactor);
     }
 

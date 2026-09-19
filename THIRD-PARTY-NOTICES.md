@@ -14,10 +14,11 @@ that cover this project's own code.
 | jlayer | 1.0.1.4 | GNU LGPL 2.1 | http://www.javazoom.net/javalayer/sources.html |
 | tritonus-share | 0.3.7.4 | GNU LGPL 2.1 | http://tritonus.org/ |
 | vorbisspi | 1.0.3.3 | GNU LGPL 2.1 | http://www.javazoom.net/vorbisspi/vorbisspi.html |
+| jorbis | 0.0.17.4 | GNU Library GPL 2 or later (upstream source header) | http://www.jcraft.com/jorbis/ |
 | jflac-codec | 1.5.2 | GNU LGPL 2.1 | http://jflac.org/ |
 
-All five are distributed under the Maven coordinates `com.googlecode.soundlibs:*`
-(mp3spi, jlayer, tritonus-share, vorbisspi) and `org.jflac:jflac-codec`, unmodified
+All six are distributed under the Maven coordinates `com.googlecode.soundlibs:*`
+(mp3spi, jlayer, tritonus-share, vorbisspi, jorbis) and `org.jflac:jflac-codec`, unmodified
 from their published upstream releases. No changes were made to their source.
 
 ## What this means in practice
