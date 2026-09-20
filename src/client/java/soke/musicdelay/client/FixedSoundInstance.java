@@ -29,10 +29,12 @@ public class FixedSoundInstance extends AbstractSoundInstance {
     }
 
     @Override
-    public @Nullable WeighedSoundEvents resolve(SoundManager soundManager) {
+    public @Nullable WeighedSoundEvents getOrResolve(SoundManager soundManager) {
         this.sound = fixedSound;
-        WeighedSoundEvents events = new WeighedSoundEvents(this.identifier, null);
-        events.addSound(fixedSound);
-        return events;
+        if (this.soundEvent == null) {
+            this.soundEvent = new WeighedSoundEvents(this.identifier, null);
+            this.soundEvent.addSound(fixedSound);
+        }
+        return this.soundEvent;
     }
 }

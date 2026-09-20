@@ -4,7 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.glfw.GLFW;
+import org.lwjgl.sdl.SDLScancode;
 
 public class ModKeybindings {
 
@@ -22,50 +22,50 @@ public class ModKeybindings {
     public static void register() {
         skipForward = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.skip_forward",
-                InputConstants.Type.KEYSYM,
+                InputConstants.Type.KEYBOARD,
                 InputConstants.KEY_RIGHT,
                 CATEGORY
         ));
 
         skipBackward = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.skip_backward",
-                InputConstants.Type.KEYSYM,
+                InputConstants.Type.KEYBOARD,
                 InputConstants.KEY_LEFT,
                 CATEGORY
         ));
 
         volumeUp = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.volume_up",
-                InputConstants.Type.KEYSYM,
+                InputConstants.Type.KEYBOARD,
                 InputConstants.KEY_UP,
                 CATEGORY
         ));
 
         volumeDown = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.volume_down",
-                InputConstants.Type.KEYSYM,
+                InputConstants.Type.KEYBOARD,
                 InputConstants.KEY_DOWN,
                 CATEGORY
         ));
 
         openMusicBrowser = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.open_browser",
-                InputConstants.Type.KEYSYM,
+                InputConstants.Type.KEYBOARD,
                 InputConstants.KEY_M,
                 CATEGORY
         ));
 
         pauseResume = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.pause_resume",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_KP_0,
+                InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_NUMPAD0,
                 CATEGORY
         ));
 
         repeatOne = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.music-delay-reducer.repeat_one",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_KP_DECIMAL,
+                InputConstants.Type.KEYBOARD,
+                SDLScancode.SDL_SCANCODE_KP_PERIOD,
                 CATEGORY
         ));
     }

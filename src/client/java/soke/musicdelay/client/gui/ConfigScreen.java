@@ -6,11 +6,11 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.Util;
+import org.lwjgl.sdl.SDLMisc;
 import org.jspecify.annotations.Nullable;
-import org.lwjgl.PointerBuffer;
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
+import soke.musicdelay.client.musiclibrary.NativeTrackDialogs;
+
+
 import soke.musicdelay.ModConfig;
 import soke.musicdelay.client.CustomTrackManager;
 import soke.musicdelay.client.MusicDelayReducerClient;
@@ -240,7 +240,7 @@ public class ConfigScreen extends Screen {
         row++;
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.cache.title"),
-                b -> this.minecraft.gui.setScreen(new AudioCacheScreen(this)))
+                        b -> this.minecraft.gui.setScreen(new AudioCacheScreen(this)))
                 .bounds(centerX - 100, rowY(row++), 200, 20).build());
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.config.save"), button -> {
@@ -322,36 +322,15 @@ public class ConfigScreen extends Screen {
     }
 
     private void openFileChooser() {
-        new Thread(() -> {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                PointerBuffer filters = stack.mallocPointer(4);
-                filters.put(stack.UTF8("*.wav"));
-                filters.put(stack.UTF8("*.mp3"));
-                filters.put(stack.UTF8("*.ogg"));
-                filters.put(stack.UTF8("*.flac"));
-                filters.flip();
-
-                String result = TinyFileDialogs.tinyfd_openFileDialog(
-                        "Select audio track",
-                        null,
-                        filters,
-                        "Audio files (.wav, .mp3, .ogg, .flac)",
-                        false
-                );
-
-                if (result != null) {
-                    Path selected = Path.of(result);
-                    net.minecraft.client.Minecraft.getInstance().execute(() -> CustomTrackManager.get().addTrack(selected));
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }, "mdr-file-chooser").start();
+        NativeTrackDialogs.pickAudio(selected -> {
+            if (selected != null) CustomTrackManager.get().addTrack(selected);
+        });
     }
-
     private void openTracksFolder() {
         Path folder = CustomTrackManager.get().getTracksFolder();
-        Util.getPlatform().openFile(folder.toFile());
+        if (!SDLMisc.SDL_OpenURL(folder.toAbsolutePath().toUri().toString())) {
+            System.err.println("Always Play: cannot open tracks folder: " + org.lwjgl.sdl.SDLError.SDL_GetError());
+        }
     }
 
     // Открывает диалог выбора папки. Если выбранная папка не проходит проверку
