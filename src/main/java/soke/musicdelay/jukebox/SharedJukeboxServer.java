@@ -99,12 +99,24 @@ public final class SharedJukeboxServer {
         }
     }
 
+    private volatile String cacheIdentity;
+    private static String cacheLabel(String value) {
+        return value == null ? "" : value.substring(0, Math.min(64, value.length()));
+    }
+
     private SharedJukeboxServer(MinecraftServer server) {
         this.server = server;
         root = server.getWorldPath(LevelResource.ROOT).resolve("always-play-audio");
         io.execute(() -> {
             try {
                 Files.createDirectories(root);
+                Path identityFile = root.resolve("world-id.txt");
+                if (Files.isRegularFile(identityFile)) cacheIdentity = UUID.fromString(Files.readString(identityFile).trim()).toString();
+                else {
+                    String identity = UUID.randomUUID().toString();
+                    Files.writeString(identityFile, identity, java.nio.file.StandardOpenOption.CREATE_NEW);
+                    cacheIdentity = identity;
+                }
                 try (var files = Files.list(root)) {
                     files.filter(Files::isRegularFile).forEach(p -> {
                         String n = p.getFileName().toString();
@@ -270,6 +282,9 @@ public final class SharedJukeboxServer {
         if (!ServerPlayNetworking.canSend(p, SharedMusicPacket.TYPE)) return;
         UUID id = p.getUUID();
         switch (packet.action()) {
+            case "cache_identity" -> {
+                if (cacheIdentity != null) send(p, SharedMusicPacket.simple("cache_identity", cacheIdentity, ""));
+            }
             case "prepare_status" -> {
                 var known = preparations.get(id);
                 ClientPreparation status = known == null ? null : known.get(packet.id());
@@ -594,7 +609,7 @@ public final class SharedJukeboxServer {
                 if (!ServerPlayNetworking.canSend(p, SharedMusicPacket.TYPE)) continue;
                 present.add(p.getUUID());
                 send(p, new SharedMusicPacket("play", s.id, s.record.trackType() + "|" + s.record.trackValue(),
-                        "", "", s.pos, elapsed, 0, new byte[0]));
+                        cacheLabel(s.record.title()), cacheLabel(s.record.composer()), s.pos, elapsed, 0, new byte[0]));
             }
             for (UUID id : s.listeners) if (!present.contains(id)) {
                 ServerPlayer p = server.getPlayerList().getPlayer(id);

@@ -28,9 +28,7 @@ public class UnifiedTrack {
 
     public String getDisplayName() {
         if (type == Type.CUSTOM) {
-            String name = customPath.getFileName().toString();
-            int dot = name.lastIndexOf('.');
-            return dot > 0 ? name.substring(0, dot) : name;
+            return soke.musicdelay.client.musiclibrary.TrackEntry.fromFile(customPath).displayName();
         } else {
             return vanillaSound.getLocation().toString();
         }

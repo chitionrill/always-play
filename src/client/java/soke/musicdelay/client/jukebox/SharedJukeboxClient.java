@@ -7,6 +7,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import soke.musicdelay.MusicDelayReducer;
 import soke.musicdelay.client.AudioTrack;
+import soke.musicdelay.client.cache.AudioCacheManager;
 import soke.musicdelay.client.BrowsableTrack;
 import soke.musicdelay.client.VanillaTrackRegistry;
 import soke.musicdelay.client.gui.RecordUploadToast;
@@ -74,7 +75,9 @@ public final class SharedJukeboxClient {
         void update(SharedMusicPacket packet) { elapsed = Math.max(0, packet.number()); updated = System.nanoTime(); }
         long offset() { return elapsed + (System.nanoTime() - updated) / 1_000_000; }
     }
-    private static Path cache() { return Minecraft.getInstance().gameDirectory.toPath().resolve("always-play-audio-cache"); }
+    private static Path cache() { return AudioCacheManager.directory(); }
+    private static final ArrayDeque<SharedMusicPacket> deferredPackets = new ArrayDeque<>();
+    public static void fileTask(Runnable task) { IO.execute(task); }
     public static boolean supported() { return ClientPlayNetworking.canSend(SharedMusicPacket.TYPE); }
     public static void message(String key) {
         var player = Minecraft.getInstance().player;
@@ -86,6 +89,7 @@ public final class SharedJukeboxClient {
     }
     public static void record(BrowsableTrack track, String title, String composer) {
         if (!supported()) { message("server_required"); return; }
+        if (AudioCacheManager.active() == null) { message("busy"); return; }
         var player = Minecraft.getInstance().player;
         if (player == null) return;
         if (recording != null || preparing || upload != null) { message("busy"); return; }
@@ -106,6 +110,7 @@ public final class SharedJukeboxClient {
         if (track.kind == BrowsableTrack.Kind.CUSTOM) {
             if (preparing || upload != null) { message("busy"); return; }
             preparing = true; long epoch = generation;
+            String cacheId = AudioCacheManager.active().id();
             // The existing toast remains visible while the server reserves the disc.
             IO.execute(() -> {
                 String errorKey = "file_read_failed";
@@ -120,7 +125,8 @@ public final class SharedJukeboxClient {
                     errorKey = "cache_write_failed";
                     String hash = SharedMusicFiles.hash(bytes);
                     // Cache the exact bytes that will be uploaded, not a mutable source path.
-                    SharedMusicFiles.store(cache(), hash, bytes, 512L * 1024 * 1024);
+                    AudioCacheManager.store().store(cacheId, hash, bytes, false);
+                    AudioCacheManager.store().title(cacheId, hash, safeTitle);
                     Minecraft.getInstance().execute(() -> {
                         if (epoch != generation || recording != operation) return;
                         preparing = false;
@@ -193,6 +199,11 @@ public final class SharedJukeboxClient {
     }
 
     private static void receive(SharedMusicPacket packet) {
+        if (packet.action().equals("cache_identity")) { AudioCacheManager.identity(packet.id()); return; }
+        if (AudioCacheManager.active() == null) {
+            if (deferredPackets.size() < 256) deferredPackets.add(packet);
+            return;
+        }
         switch (packet.action()) {
             case "record_reserved" -> {
                 if (recording != null && recording.token.equals(packet.id()) && !recording.reserved) {
@@ -252,6 +263,7 @@ public final class SharedJukeboxClient {
                     prefetchPending.add(hash);
             }
             case "play" -> {
+                if (packet.value().startsWith("SHARED|")) AudioCacheManager.remember(packet.value().substring(7), packet.title());
                 Playback old = sessions.get(packet.id());
                 if (old == null) {
                     if (sessions.size() >= 128) return;
@@ -379,11 +391,11 @@ public final class SharedJukeboxClient {
     private static void checkCache(String hash) { checkCache(hash, false); }
     private static void checkCache(String hash, boolean background) {
         if (checking.size() >= 4) return;
-        checking.add(hash); long epoch = generation;
+        checking.add(hash); long epoch = generation; Path cachePath = cache();
         IO.execute(() -> {
             boolean valid = false;
             try {
-                Path file = SharedMusicFiles.file(cache(), hash);
+                Path file = SharedMusicFiles.file(cachePath, hash);
                 if (Files.isRegularFile(file) && Files.size(file) <= SharedMusicPacket.MAX_FILE) {
                     valid = SharedMusicFiles.hash(Files.readAllBytes(file)).equals(hash);
                     if (valid) verifyAudio(file);
@@ -414,12 +426,13 @@ public final class SharedJukeboxClient {
         if (reportedProgress.getOrDefault(receiving, -2) != percent) reportPreparation(receiving, percent);
         if (received == incoming.length) {
             String hash = receiving; byte[] bytes = incoming; long epoch = generation;
-            boolean background = receivingBackground;
+            boolean background = receivingBackground; String cacheId = AudioCacheManager.active().id();
+            Path cachePath = cache();
             wanted.remove(hash); prefetchWanted.remove(hash); checking.add(hash); clearDownload();
             IO.execute(() -> {
                 try {
-                    SharedMusicFiles.store(cache(), hash, bytes, (background ? 448L : 512L) * 1024 * 1024);
-                    verifyAudio(SharedMusicFiles.file(cache(), hash));
+                    AudioCacheManager.store().store(cacheId, hash, bytes, background);
+                    verifyAudio(SharedMusicFiles.file(cachePath, hash));
                     Minecraft.getInstance().execute(() -> {
                         if (epoch != generation) return;
                         checking.remove(hash); markReady(hash); sessions.values().forEach(SharedJukeboxClient::startIfReady);
@@ -436,7 +449,8 @@ public final class SharedJukeboxClient {
     private static void clearDownload() { receiving = null; incoming = null; received = 0; receivingBackground = false; }
     public static void tick(Minecraft client) {
         ensureWorld(client);
-        if (client.level == null || !supported()) return;
+        if (client.level == null || !supported() || AudioCacheManager.active() == null) return;
+        while (!deferredPackets.isEmpty()) receive(deferredPackets.remove());
         urgentPreparation.values().removeIf(expiry -> System.nanoTime() >= expiry);
         if (recording != null && System.nanoTime() - recording.touched > 120_000_000_000L) {
             cancelLocalRecording(); message("transfer_failed");
@@ -499,7 +513,7 @@ public final class SharedJukeboxClient {
             ClientPlayNetworking.send(SharedMusicPacket.simple("record_cancel", recording.token, ""));
         RecordUploadToast.clear(); JukeboxLoadingToast.clearAll();
         preparationTokens.clear(); urgentPreparation.clear(); reportedProgress.clear();
-        generation++; world = null; sessions.clear(); wanted.clear(); failed.clear(); checking.clear(); ready.clear();
+        deferredPackets.clear(); generation++; world = null; sessions.clear(); wanted.clear(); failed.clear(); checking.clear(); ready.clear();
         prefetchPending.clear(); prefetchWanted.clear(); prefetchFailed.clear(); cancelling.clear();
         prefetchedBytes = 0; backgroundRetryAt = 0;
         recording = null; upload = null; preparing = false; retryAt = 0; clearDownload(); PositionalCustomTrackPlayer.stopAll();

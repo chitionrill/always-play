@@ -16,6 +16,8 @@ public record TrackEntry(String id, Path filePath, String displayName) {
         String fileName = file.getFileName().toString();
         int dot = fileName.lastIndexOf('.');
         String display = dot > 0 ? fileName.substring(0, dot) : fileName;
+        if (file.toAbsolutePath().normalize().startsWith(soke.musicdelay.client.cache.AudioCacheManager.friendsDirectory().toAbsolutePath().normalize()))
+            display = display.replaceFirst(" - [0-9a-f]{64}$", "");
         return new TrackEntry(file.toAbsolutePath().toString(), file, display);
     }
 }

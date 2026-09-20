@@ -43,9 +43,7 @@ public class BrowsableTrack {
     }
 
     public static BrowsableTrack custom(Path path) {
-        String name = path.getFileName().toString();
-        int dot = name.lastIndexOf('.');
-        if (dot > 0) name = name.substring(0, dot);
+        String name = soke.musicdelay.client.musiclibrary.TrackEntry.fromFile(path).displayName();
         return new BrowsableTrack(Kind.CUSTOM, null, path, Component.literal(name), null, 0);
     }
 
@@ -58,9 +56,7 @@ public class BrowsableTrack {
 
     // Трек, найденный сканером внутри папки (в т.ч. вложенной).
     public static BrowsableTrack folderTrack(Path path, String groupId, int depth) {
-        String name = path.getFileName().toString();
-        int dot = name.lastIndexOf('.');
-        if (dot > 0) name = name.substring(0, dot);
+        String name = soke.musicdelay.client.musiclibrary.TrackEntry.fromFile(path).displayName();
         return new BrowsableTrack(Kind.CUSTOM, null, path, Component.literal(name), groupId, depth);
     }
 

@@ -43,10 +43,12 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 			// не полагаемся на то, что обычный тик-цикл успеет/сможет это сделать сам.
 			soke.musicdelay.client.jukebox.PositionalCustomTrackPlayer.stopAll();
 			soke.musicdelay.client.jukebox.SharedJukeboxClient.reset();
+            soke.musicdelay.client.cache.AudioCacheManager.disconnect();
 			JukeboxDuckController.reset();
 		});
 
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            soke.musicdelay.client.cache.AudioCacheManager.join();
 			// Обновляем список ванильных треков (в т.ч. пластинок) при каждом заходе в мир —
 			// реестр пластинок доступен только когда мир загружен, без этого он остаётся пустым/устаревшим
 			VanillaTrackRegistry.refresh();
@@ -56,6 +58,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 		});
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            soke.musicdelay.client.cache.AudioCacheManager.tick(client);
 			soke.musicdelay.client.jukebox.SharedJukeboxClient.tick(client);
 			WavPlayer.tickVolumeSync();
 

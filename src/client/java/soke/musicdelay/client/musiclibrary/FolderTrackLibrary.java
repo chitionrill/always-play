@@ -89,6 +89,9 @@ public final class FolderTrackLibrary {
                 List<TrackLibrary.TrackSource> sources = new ArrayList<>();
                 sources.add(new TrackLibrary.TrackSource(CustomTrackManager.get().getTracksFolder(), "Твои треки"));
 
+                sources.add(new TrackLibrary.TrackSource(soke.musicdelay.client.cache.AudioCacheManager.friendsDirectory(),
+                        net.minecraft.network.chat.Component.translatable("music-delay-reducer.cache.friends_music").getString()));
+
                 Path chosen = getChosenFolder();
                 if (chosen != null && FolderValidation.validate(chosen) == FolderValidation.Result.OK) {
                     Path fileName = chosen.getFileName();

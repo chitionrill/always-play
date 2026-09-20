@@ -36,7 +36,7 @@ public class ConfigScreen extends Screen {
     private static final int CONTENT_TOP = 35;
     private static final int BOTTOM_MARGIN = 10;
     private static final int SCROLL_STEP = 20;
-    private static final int TOTAL_ROWS = 16;
+    private static final int TOTAL_ROWS = 17;
 
     private final @Nullable Screen parent;
     private final ModConfig config;
@@ -238,6 +238,10 @@ public class ConfigScreen extends Screen {
         refreshTracksButton.setTooltip(Tooltip.create(Component.translatable("music-delay-reducer.config.refresh_tracks.tooltip")));
         this.addRenderableWidget(refreshTracksButton);
         row++;
+
+        this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.cache.title"),
+                b -> this.minecraft.gui.setScreen(new AudioCacheScreen(this)))
+                .bounds(centerX - 100, rowY(row++), 200, 20).build());
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.config.save"), button -> {
             config.minDelaySeconds = Math.min(minSeconds, maxSeconds);
