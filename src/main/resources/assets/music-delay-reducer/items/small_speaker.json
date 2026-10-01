@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "music-delay-reducer:block/small_speaker"
+  }
+}

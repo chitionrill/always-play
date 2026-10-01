@@ -32,6 +32,7 @@ public class MusicDelayReducerClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		ModKeybindings.register();
+		soke.musicdelay.client.speaker.SpeakerClient.register();
 		soke.musicdelay.client.jukebox.JukeboxRecordInteractionHandler.register();
 
 		soke.musicdelay.client.jukebox.SharedJukeboxClient.register();

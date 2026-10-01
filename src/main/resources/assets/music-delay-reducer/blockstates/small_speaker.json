@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "music-delay-reducer:block/small_speaker"
+    },
+    "facing=east": {
+      "model": "music-delay-reducer:block/small_speaker",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "music-delay-reducer:block/small_speaker",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "music-delay-reducer:block/small_speaker",
+      "y": 270
+    }
+  }
+}
