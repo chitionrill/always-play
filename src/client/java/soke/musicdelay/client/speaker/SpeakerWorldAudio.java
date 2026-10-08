@@ -22,6 +22,12 @@ public final class SpeakerWorldAudio {
         long seen;
         SpeakerVoice voice;
         boolean ended;
+        SpeakerPropagation.Result acoustic=SpeakerPropagation.Result.SILENT;
+        long acousticTime=-1;
+        double extraPath;
+        boolean wasCarried;
+        SpeakerPropagation.Job acousticJob;
+        net.minecraft.core.BlockPos acousticSource,acousticPartner;
         Emitter(SpeakerPlayback.Snapshot s) { state=s; }
     }
     private SpeakerWorldAudio() { }
@@ -45,28 +51,53 @@ public final class SpeakerWorldAudio {
         sources.values().forEach(SpeakerWorldAudio::stop); sources.clear(); world=null;
     }
     private static boolean carried(Minecraft mc,UUID id) {
+        var cursor=mc.player.containerMenu.getCarried();
+        if(soke.musicdelay.speaker.SpeakerStorage.contains(cursor,id))return true;
         for(int i=0;i<mc.player.getInventory().getContainerSize();i++) {
             var item=mc.player.getInventory().getItem(i);
-            if(item.is(SpeakerRegistry.ITEM) && soke.musicdelay.speaker.SpeakerData.read(item).map(s->s.id().equals(id)).orElse(false))return true;
+            if(soke.musicdelay.speaker.SpeakerStorage.contains(item,id))return true;
         }
         return false;
     }
     public static void tick(Minecraft mc) {
         closing.removeIf(SpeakerWorldAudio::terminal);
-        if(mc.level==null || mc.player==null || !mc.hasSingleplayerServer() || !mc.player.isAlive()) { clear(); return; }
+        if(mc.level==null || mc.player==null || !mc.hasSingleplayerServer()) { clear(); return; }
         if(world!=mc.level) { clear(); world=mc.level; }
         if(!mc.isPaused()) ticks++;
         if(ticks%20==0) SpeakerTracks.poll();
-        var it=sources.values().iterator();
+        // Rotate service order so busy scenes do not starve the same emitters.
+        long acousticDeadline=System.nanoTime()+3_000_000L;
+        var ordered=new ArrayList<>(sources.values());
+        if(!ordered.isEmpty())Collections.rotate(ordered,-(int)(ticks%ordered.size()));
+        var it=ordered.iterator();
         while(it.hasNext()) {
             Emitter e=it.next(); var s=e.state;
-            boolean inInventory=carried(mc,s.id());
-            boolean blockPresent=!s.carried() && mc.level.isLoaded(s.pos()) && mc.level.getBlockState(s.pos()).is(SpeakerRegistry.BLOCK);
+            boolean inInventory=s.carried() && mc.player.isAlive() && carried(mc,s.id());
+            var dropped=s.itemEntityId()>=0?mc.level.getEntity(s.itemEntityId()):null;
+            boolean onGround=dropped instanceof net.minecraft.world.entity.item.ItemEntity item && !item.isRemoved()
+                    && soke.musicdelay.speaker.SpeakerStorage.contains(item.getItem(),s.id());
+            boolean inChest=s.chest() && mc.level.isLoaded(s.pos())
+                    && mc.level.getBlockEntity(s.pos()) instanceof net.minecraft.world.level.block.entity.ChestBlockEntity;
+            boolean inShell=s.shell() && !s.carried() && s.itemEntityId()<0 && mc.level.isLoaded(s.pos())
+                    && mc.level.getBlockEntity(s.pos()) instanceof net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
+            boolean inEnder=s.ender() && mc.player.isAlive() && !mc.player.isSpectator() && !s.carried() && mc.level.isLoaded(s.pos())
+                    && mc.level.getBlockState(s.pos()).is(net.minecraft.world.level.block.Blocks.ENDER_CHEST);
+            boolean blockPresent=s.itemEntityId()<0 && !s.carried() && mc.level.isLoaded(s.pos()) && mc.level.getBlockState(s.pos()).is(SpeakerRegistry.BLOCK);
             // Brief grace covers the inventory/block handoff, preserving the open decoder and song position.
-            if(ticks-e.seen>30 || (!inInventory && !blockPresent && ticks-e.seen>6)) {
-                stop(e); it.remove(); continue;
+            if(ticks-e.seen>30 || (!inInventory && !blockPresent && !onGround && !inChest && !inShell && !inEnder && ticks-e.seen>6)) {
+                stop(e); sources.remove(s.id()); continue;
             }
-            double dx=s.pos().getX()+.5-mc.player.getX(),dy=s.pos().getY()+.5-mc.player.getEyeY(),dz=s.pos().getZ()+.5-mc.player.getZ();
+            // A login snapshot can arrive before the chunk/block entity. Never start dry at a guessed location.
+            if(e.voice==null && !inInventory && !blockPresent && !onGround && !inChest && !inShell && !inEnder)continue;
+            double sourceX=onGround?dropped.getX():s.pos().getX()+.5;
+            double sourceY=onGround?dropped.getY()+.15:s.pos().getY()+.5;
+            double sourceZ=onGround?dropped.getZ():s.pos().getZ()+.5;
+            if(inChest && !inInventory) {
+                sourceX=(s.pos().getX()+s.chestPartner().getX())*.5+.5;
+                sourceZ=(s.pos().getZ()+s.chestPartner().getZ())*.5+.5;
+            }
+            if(inInventory){sourceX=mc.player.getX();sourceY=mc.player.getEyeY()-.3;sourceZ=mc.player.getZ();}
+            double dx=sourceX-mc.player.getX(),dy=sourceY-mc.player.getEyeY(),dz=sourceZ-mc.player.getZ();
             double distance=inInventory?0:Math.sqrt(dx*dx+dy*dy+dz*dz);
             if(!s.enabled() || s.track().isEmpty() || distance>32) { stop(e); continue; }
             var track=SpeakerTracks.find(s.track());
@@ -82,7 +113,7 @@ public final class SpeakerWorldAudio {
                 long offset=Math.max(0,s.offset()+(ticks-e.seen)*50);
                 if(offset>86_400_000) { e.ended=true; continue; }
                 e.voice=new SpeakerVoice(s.id(),()->AudioTrack.open(track.path()),offset);
-                e.voice.start();
+                // Start after initial position, gain and enclosure parameters are supplied below.
             }
             var status=e.voice.status();
             if(status==SpeakerVoice.Status.FAILED || status==SpeakerVoice.Status.FINISHED) {
@@ -97,9 +128,51 @@ public final class SpeakerWorldAudio {
             }
             double yaw=Math.toRadians(mc.player.getYRot()),horizontal=Math.hypot(dx,dz);
             double pan=horizontal<.001?0:(-dx*Math.cos(yaw)-dz*Math.sin(yaw))/horizontal;
-            var levels=SpeakerPcm.spatial(distance,pan,s.volume(),24,
+            {
+                if(e.wasCarried!=inInventory){e.acousticJob=null;e.acousticTime=-1;e.extraPath=0;e.wasCarried=inInventory;}
+                var acousticSource=inInventory?net.minecraft.core.BlockPos.containing(sourceX,sourceY,sourceZ):s.pos();
+                var acousticPartner=inInventory?acousticSource:s.chestPartner();
+                if(e.acousticTime<0)e.acoustic=SpeakerPropagation.Result.SILENT;
+                var origin=new SpeakerPropagation.Point(sourceX,sourceY,sourceZ);
+                var listener=new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ());
+                if(e.acousticJob!=null && (!e.acousticJob.near(origin,listener,24*s.volume())
+                        || !acousticSource.equals(e.acousticSource) || !acousticPartner.equals(e.acousticPartner)))e.acousticJob=null;
+                if(System.nanoTime()<acousticDeadline) {
+                    if(e.acousticJob==null && (e.acousticTime<0 || ticks-e.acousticTime>=2)) {
+                        e.acousticJob=SpeakerAcoustics.begin(mc,sourceX,sourceY,sourceZ,acousticSource,acousticPartner,s.volume());
+                        e.acousticSource=acousticSource;e.acousticPartner=acousticPartner;
+                    }
+                    if(e.acousticJob!=null && e.acousticJob.advance(64,acousticDeadline)) {
+                        e.acoustic=e.acousticJob.result();
+                        e.extraPath=inInventory?0:Math.max(0,e.acoustic.distance()-e.acousticJob.directDistance());
+                        e.acousticTime=ticks;e.acousticJob=null;
+                    } else if(e.acousticTime<0 && e.acousticJob!=null && e.acousticJob.provisional()!=null) {
+                        // A fully traced direct path is safe to hear while the detour search continues.
+                        e.acoustic=e.acousticJob.provisional();e.extraPath=0;e.acousticTime=ticks;
+                    }
+                }
+            }
+            if(!inInventory && e.acoustic.arrival()!=null) {
+                var arrival=e.acoustic.arrival();
+                double ax=arrival.x()-mc.player.getX(),az=arrival.z()-mc.player.getZ(),ah=Math.hypot(ax,az);
+                if(ah>.05)pan=(-ax*Math.cos(yaw)-az*Math.sin(yaw))/ah;
+            }
+            var levels=SpeakerPcm.spatial(distance+e.extraPath,pan,s.volume(),24,
                     mc.options.getSoundSourceVolume(SoundSource.MASTER),mc.options.getSoundSourceVolume(SoundSource.RECORDS),inInventory);
-            e.voice.update(new SpeakerVoice.Control(levels,mc.isPaused()));
+            float openness=0;
+            if(inChest && !inInventory) {
+                var chest=(net.minecraft.world.level.block.entity.ChestBlockEntity)mc.level.getBlockEntity(s.pos());
+                openness=chest.getOpenNess(1);
+                if(mc.level.isLoaded(s.chestPartner()) && mc.level.getBlockEntity(s.chestPartner()) instanceof net.minecraft.world.level.block.entity.ChestBlockEntity other)
+                    openness=Math.max(openness,other.getOpenNess(1));
+            }
+            if(inShell)openness=((net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity)mc.level.getBlockEntity(s.pos())).getProgress(1);
+            if(inEnder && mc.level.getBlockEntity(s.pos()) instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity enderChest)
+                openness=enderChest.getOpenNess(1);
+            e.voice.update(new SpeakerVoice.Control(levels,mc.isPaused(),inChest && !inInventory,
+                    openness,!s.pos().equals(s.chestPartner()),inChest && mc.level.getBlockState(s.pos()).getBlock()
+                    instanceof net.minecraft.world.level.block.CopperChestBlock,s.shell(),s.ender(),e.acoustic.gain(),e.acoustic.cutoff(),e.acoustic.reflections()));
+            if(e.voice.status()==SpeakerVoice.Status.NEW)e.voice.start();
         }
     }
 }

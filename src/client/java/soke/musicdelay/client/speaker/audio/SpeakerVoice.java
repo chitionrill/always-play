@@ -15,8 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class SpeakerVoice implements AutoCloseable {
     @FunctionalInterface public interface Source { AudioTrack open() throws Exception; }
     public enum Status { NEW, OPENING, PLAYING, PAUSED, FINISHED, STOPPED, FAILED }
-    public record Control(SpeakerPcm.Levels levels, boolean paused) {
-        public Control { Objects.requireNonNull(levels); }
+    public record Control(SpeakerPcm.Levels levels, boolean paused, boolean chest, float openness, boolean doubleChest, boolean copper, boolean shell, boolean ender, float environmentGain, float environmentCutoff, java.util.List<SpeakerPropagation.Reflection> reflections) {
+        public Control { Objects.requireNonNull(levels); reflections=java.util.List.copyOf(reflections); openness=Float.isFinite(openness)?Math.clamp(openness,0,1):0; }
+        public Control(SpeakerPcm.Levels levels, boolean paused) { this(levels,paused,false,0,false,false,false,false,1,20000,java.util.List.of()); }
     }
     private static final int FRAMES = 512;
     private final UUID id;
@@ -79,6 +80,9 @@ public final class SpeakerVoice implements AutoCloseable {
             line.open(new AudioFormat(rate, 16, 2, true, false), FRAMES * 4 * 4);
             long initialFrame = line.getLongFramePosition();
             SpeakerPcm.Levels previous = SpeakerPcm.Levels.SILENT;
+            SpeakerChestFilter chestFilter = new SpeakerChestFilter(rate,channels);
+            SpeakerEnderFilter enderFilter = new SpeakerEnderFilter(rate,channels);
+            SpeakerEnvironmentFilter environmentFilter = new SpeakerEnvironmentFilter(rate,channels);
             boolean running = false;
             while (!stopped) {
                 Control current = control;
@@ -92,8 +96,12 @@ public final class SpeakerVoice implements AutoCloseable {
                 status = Status.PLAYING;
                 int count = track.read(input);
                 if (count < 0) break;
-                int bytes = SpeakerPcm.mix(input, count, channels, output, previous, current.levels);
-                previous = current.levels;
+                chestFilter.process(input,count,current.chest,current.openness,current.doubleChest,current.copper,current.shell);
+                enderFilter.process(input,count,current.ender,current.openness);
+                environmentFilter.process(input,count,current.environmentGain,current.environmentCutoff,current.reflections);
+                var next = SpeakerPcm.smooth(previous,current.levels,count/(channels*2),rate);
+                int bytes = SpeakerPcm.mix(input, count, channels, output, previous, next);
+                previous = next;
                 int offset = 0;
                 while (!stopped && offset < bytes) {
                     if (control.paused) {

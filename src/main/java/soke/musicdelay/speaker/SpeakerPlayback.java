@@ -14,11 +14,23 @@ import net.minecraft.world.level.block.state.BlockState;
 public final class SpeakerPlayback {
     private SpeakerPlayback() { }
     public record Snapshot(BlockPos pos, java.util.UUID id, String track, long offset, long epoch,
-                           float volume, boolean enabled, boolean carried) implements CustomPacketPayload {
-        public static final Type<Snapshot> TYPE = new Type<>(Identifier.fromNamespaceAndPath("music-delay-reducer", "speaker_audio_v2"));
+                           float volume, boolean enabled, boolean carried, int itemEntityId, boolean chest, BlockPos chestPartner, boolean shell, boolean ender) implements CustomPacketPayload {
+        public Snapshot(BlockPos pos, java.util.UUID id, String track, long offset, long epoch,
+                        float volume, boolean enabled, boolean carried, int itemEntityId) {
+            this(pos,id,track,offset,epoch,volume,enabled,carried,itemEntityId,false,pos);
+        }
+        public Snapshot(BlockPos pos, java.util.UUID id, String track, long offset, long epoch,
+                        float volume, boolean enabled, boolean carried, int itemEntityId, boolean chest, BlockPos partner) {
+            this(pos,id,track,offset,epoch,volume,enabled,carried,itemEntityId,chest,partner,false);
+        }
+        public Snapshot(BlockPos pos, java.util.UUID id, String track, long offset, long epoch,
+                        float volume, boolean enabled, boolean carried, int itemEntityId, boolean chest, BlockPos partner, boolean shell) {
+            this(pos,id,track,offset,epoch,volume,enabled,carried,itemEntityId,chest,partner,shell,false);
+        }
+        public static final Type<Snapshot> TYPE = new Type<>(Identifier.fromNamespaceAndPath("music-delay-reducer", "speaker_audio_v6"));
         public static final StreamCodec<RegistryFriendlyByteBuf, Snapshot> CODEC = new StreamCodec<>() {
-            public Snapshot decode(RegistryFriendlyByteBuf b) { return new Snapshot(b.readBlockPos(), b.readUUID(), b.readUtf(512), b.readLong(), b.readLong(), b.readFloat(), b.readBoolean(), b.readBoolean()); }
-            public void encode(RegistryFriendlyByteBuf b, Snapshot s) { b.writeBlockPos(s.pos); b.writeUUID(s.id); b.writeUtf(s.track,512); b.writeLong(s.offset); b.writeLong(s.epoch); b.writeFloat(s.volume); b.writeBoolean(s.enabled); b.writeBoolean(s.carried); }
+            public Snapshot decode(RegistryFriendlyByteBuf b) { return new Snapshot(b.readBlockPos(), b.readUUID(), b.readUtf(512), b.readLong(), b.readLong(), b.readFloat(), b.readBoolean(), b.readBoolean(), b.readVarInt(), b.readBoolean(), b.readBlockPos(), b.readBoolean(), b.readBoolean()); }
+            public void encode(RegistryFriendlyByteBuf b, Snapshot s) { b.writeBlockPos(s.pos); b.writeUUID(s.id); b.writeUtf(s.track,512); b.writeLong(s.offset); b.writeLong(s.epoch); b.writeFloat(s.volume); b.writeBoolean(s.enabled); b.writeBoolean(s.carried); b.writeVarInt(s.itemEntityId); b.writeBoolean(s.chest); b.writeBlockPos(s.chestPartner); b.writeBoolean(s.shell); b.writeBoolean(s.ender); }
         };
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
@@ -32,6 +44,10 @@ public final class SpeakerPlayback {
     }
     public static void register() {
         SpeakerInventory.register();
+        SpeakerDropped.register();
+        SpeakerChest.register();
+        SpeakerShulker.register();
+        SpeakerEnder.register();
         PayloadTypeRegistry.clientboundPlay().register(Snapshot.TYPE,Snapshot.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(End.TYPE,End.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(End.TYPE,(p,c)->c.server().execute(()->{
@@ -39,6 +55,10 @@ public final class SpeakerPlayback {
             if (!c.server().isSingleplayer() || !c.server().isSingleplayerOwner(player.nameAndId())
                     || !level.isLoaded(p.pos) || player.distanceToSqr(p.pos.getX()+.5,p.pos.getY()+.5,p.pos.getZ()+.5)>4096) return;
             if (SpeakerInventory.finish(player,p)) return;
+            if (SpeakerDropped.finish(player,p)) return;
+            if (SpeakerChest.finish(player,p)) return;
+            if (SpeakerShulker.finish(player,p)) return;
+            if (SpeakerEnder.finish(player,p)) return;
             if (level.getBlockEntity(p.pos) instanceof SpeakerBlockEntity be) {
                 var item=be.itemCopy();
                 SpeakerData.read(item).filter(s->s.id().equals(p.id) && s.trackReference().equals(p.track)
@@ -53,7 +73,7 @@ public final class SpeakerPlayback {
         // Snapshots are bounded by loaded ticking blocks and listener distance, not a scan of the world.
         if (level.getGameTime()%5==0) SpeakerData.read(be.itemCopy()).ifPresent(s->{
             var packet=new Snapshot(pos,s.id(),s.trackReference(),s.positionMillis(),
-                    level.getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),false);
+                    level.getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),false,-1);
             for (var player:server.players()) if (server.getServer().isSingleplayerOwner(player.nameAndId())
                     && player.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<4096
                     && ServerPlayNetworking.canSend(player,Snapshot.TYPE)) { ServerPlayNetworking.send(player,packet); SpeakerNetworking.refreshBlock(player,pos,s); }

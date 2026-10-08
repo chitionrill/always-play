@@ -12,51 +12,62 @@ import net.minecraft.world.item.component.CustomData;
 public final class SpeakerInventory {
     private static final String ORDER="always_play_inventory_order";
     private static final Map<UUID,Set<UUID>> previous=new HashMap<>();
+    private static final Set<UUID> menuSyncPending=new HashSet<>();
+    public static void requestMenuSync(ServerPlayer player) {
+        if(player.level().getServer().isSingleplayer())menuSyncPending.add(player.getUUID());
+    }
     private SpeakerInventory() { }
-    private static long order(ItemStack item) {
+    static long order(ItemStack item) {
         return item.getOrDefault(DataComponents.CUSTOM_DATA,CustomData.EMPTY).copyTag().getLong(ORDER).orElse(0L);
     }
-    private static void order(ItemStack item,long value) {
+    static void order(ItemStack item,long value) {
         var tag=item.getOrDefault(DataComponents.CUSTOM_DATA,CustomData.EMPTY).copyTag();
         tag.putLong(ORDER,value);item.set(DataComponents.CUSTOM_DATA,CustomData.of(tag));
     }
+    private static List<ItemStack> items(ServerPlayer player) {
+        List<ItemStack> result=new ArrayList<>();
+        for(int i=0;i<player.getInventory().getContainerSize();i++)result.add(player.getInventory().getItem(i));
+        var cursor=player.containerMenu.getCarried();
+        if(!cursor.isEmpty())result.add(cursor);
+        return result;
+    }
     public static void promote(ServerPlayer player,ItemStack item) {
-        long max=0;
-        for(int i=0;i<player.getInventory().getContainerSize();i++) max=Math.max(max,order(player.getInventory().getItem(i)));
+        var view=new SpeakerStorage.View(items(player));promote(view.items,item);view.commit();
+    }
+    static void promote(List<ItemStack> all,ItemStack item) {
+        long max=all.stream().mapToLong(SpeakerInventory::order).max().orElse(0);
         if(max==Long.MAX_VALUE) {
-            // Compact corrupt/externally edited ranks before incrementing them.
-            List<ItemStack> items=new ArrayList<>();
-            for(int i=0;i<player.getInventory().getContainerSize();i++) {
-                var s=player.getInventory().getItem(i);if(s.is(SpeakerRegistry.ITEM))items.add(s);
-            }
-            items.sort(Comparator.comparingLong(SpeakerInventory::order));max=0;
-            for(var s:items)order(s,++max);
+            var ranked=new ArrayList<>(all);ranked.sort(Comparator.comparingLong(SpeakerInventory::order));
+            max=0;for(var stack:ranked)order(stack,++max);
         }
         order(item,max+1);
     }
     public static void register() {
-        ServerLifecycleEvents.SERVER_STOPPED.register(server->previous.clear());
+        ServerLifecycleEvents.SERVER_STOPPED.register(server->{ previous.clear();menuSyncPending.clear(); });
         ServerTickEvents.END_SERVER_TICK.register(server->{
             if(!server.isSingleplayer())return;
             Set<UUID> connected=new HashSet<>();
             for(var player:server.getPlayerList().getPlayers()) if(server.isSingleplayerOwner(player.nameAndId())) {
                 connected.add(player.getUUID());tick(player);
+                // Flush after vanilla processes predicted slot/cursor hashes, not inside clicked().
+                if(menuSyncPending.remove(player.getUUID()))player.containerMenu.broadcastFullState();
             }
-            previous.keySet().retainAll(connected);
+            previous.keySet().retainAll(connected);menuSyncPending.retainAll(connected);
         });
     }
     private static void tick(ServerPlayer player) {
         if(!player.isAlive() || player.isSpectator()) { previous.remove(player.getUUID());return; }
+        var view=new SpeakerStorage.View(items(player));
         List<ItemStack> items=new ArrayList<>();Set<UUID> now=new HashSet<>();
         Set<UUID> before=previous.get(player.getUUID());
-        for(int i=0;i<player.getInventory().getContainerSize();i++) {
-            var item=player.getInventory().getItem(i);
+        for(var item:view.items) {
+
             if(!item.is(SpeakerRegistry.ITEM))continue;
             var found=SpeakerRegistry.ensureState(item);if(found.isEmpty())continue;
             var state=found.get();
             // Creative inventory cloning can duplicate the item UUID; each physical copy needs one.
             if(!now.add(state.id())) { state=state.copyForNewSpeaker();SpeakerData.write(item,state);now.add(state.id()); }
-            if((before!=null && !before.contains(state.id())) || order(item)<=0) promote(player,item);
+            if((before!=null && !before.contains(state.id())) || order(item)<=0) promote(view.items,item);
             items.add(item);
         }
         previous.put(player.getUUID(),now);
@@ -72,14 +83,29 @@ public final class SpeakerInventory {
             }
             if((player.level().getGameTime()%5==0 || before==null || !before.contains(s.id())) && ServerPlayNetworking.canSend(player,SpeakerPlayback.Snapshot.TYPE)) {
                 ServerPlayNetworking.send(player,new SpeakerPlayback.Snapshot(player.blockPosition(),s.id(),s.trackReference(),
-                        s.positionMillis(),player.level().getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),true));
+                        s.positionMillis(),player.level().getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),true,-1,false,player.blockPosition(),view.nested.contains(item)));
                 SpeakerNetworking.refreshHand(player,s);
             }
         }
+        view.commit();
     }
+    /** Called for a newly thrown item before its first audio snapshot, not for old saved drops. */
+    public static void prepareDrop(ServerPlayer player,net.minecraft.world.entity.item.ItemEntity dropped) {
+        var roots=items(player);roots.add(dropped.getItem());var view=new SpeakerStorage.View(roots);
+        var candidates=view.items.stream().filter(item->SpeakerData.read(item).isPresent()).toList();
+        var selected=SpeakerInventoryPolicy.select(candidates.stream().map(item->{var state=SpeakerData.read(item).orElseThrow();
+            return new SpeakerInventoryPolicy.Entry(state.id(),state.main(),state.enabled(),order(item));}).toList());
+        for(var item:candidates) {
+            var state=SpeakerData.read(item).orElseThrow();
+            if(state.enabled() && !selected.contains(state.id()))SpeakerData.write(item,state.withEnabled(false));
+        }
+        view.commit();dropped.setItem(dropped.getItem().copy());
+    }
+
     public static boolean finish(ServerPlayer player,SpeakerPlayback.End packet) {
-        for(int i=0;i<player.getInventory().getContainerSize();i++) {
-            var item=player.getInventory().getItem(i);if(!item.is(SpeakerRegistry.ITEM))continue;
+        var view=new SpeakerStorage.View(items(player));
+        for(var item:view.items) {
+            if(!item.is(SpeakerRegistry.ITEM))continue;
             var state=SpeakerData.read(item);
             if(state.isEmpty() || !state.get().id().equals(packet.id()))continue;
             var s=state.get();
@@ -88,7 +114,7 @@ public final class SpeakerInventory {
                 SpeakerData.write(item,s.withEnabled(false).withPlayback(s.trackReference(),0));
                 SpeakerNetworking.refreshHand(player,SpeakerData.read(item).orElseThrow());
             }
-            return true;
+            view.commit();return true;
         }
         return false;
     }

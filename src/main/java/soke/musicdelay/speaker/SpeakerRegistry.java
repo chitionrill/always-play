@@ -59,7 +59,10 @@ public final class SpeakerRegistry {
                 if (player instanceof ServerPlayer serverPlayer) SpeakerNetworking.openBlock(serverPlayer, hit.getBlockPos());
                 return InteractionResult.SUCCESS;
             }
-            // Open the held speaker even when looking at a chest or another interactive block.
+            // Let vanilla chest interaction take priority over the held speaker.
+            if (level.getBlockState(hit.getBlockPos()).getBlock() instanceof net.minecraft.world.level.block.AbstractChestBlock<?>
+                    || level.getBlockState(hit.getBlockPos()).getBlock() instanceof net.minecraft.world.level.block.ShulkerBoxBlock) return InteractionResult.PASS;
+            // Open the held speaker when interacting with other blocks.
             if (!player.isShiftKeyDown() && player.getItemInHand(hand).is(ITEM)) {
                 if (player instanceof ServerPlayer serverPlayer) SpeakerNetworking.openHand(serverPlayer, hand);
                 return InteractionResult.SUCCESS;

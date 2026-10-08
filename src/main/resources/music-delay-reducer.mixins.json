@@ -3,7 +3,11 @@
 	"package": "soke.musicdelay.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
-		"ExampleMixin"
+		"ExampleMixin",
+		"ChestSpeakerMixin",
+		"SpeakerMenuSyncMixin",
+		"ShulkerSpeakerMixin",
+		"ShulkerPlacementMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

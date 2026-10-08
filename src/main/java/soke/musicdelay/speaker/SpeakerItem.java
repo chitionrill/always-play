@@ -21,6 +21,9 @@ public final class SpeakerItem extends BlockItem {
     @Override public InteractionResult useOn(UseOnContext context) {
         Player player = context.getPlayer();
         if (player == null || player.isSpectator()) return InteractionResult.PASS;
+        if (!player.isShiftKeyDown() && (context.getLevel().getBlockState(context.getClickedPos()).getBlock()
+                instanceof net.minecraft.world.level.block.AbstractChestBlock<?>
+                || context.getLevel().getBlockState(context.getClickedPos()).getBlock() instanceof net.minecraft.world.level.block.ShulkerBoxBlock)) return InteractionResult.SUCCESS;
         if (!player.isShiftKeyDown()) return use(context.getLevel(), player, context.getHand());
         if (!context.getLevel().isClientSide()
                 && SpeakerRegistry.ensureState(context.getItemInHand()).isEmpty()) return InteractionResult.FAIL;

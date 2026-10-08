@@ -28,6 +28,14 @@ public final class SpeakerPcm {
         return new Levels(gain, carriedByListener ? 0 : (float) Math.clamp(right, -1, 1));
     }
 
+    /** Continue approaching the latest game-tick target on every audio buffer. */
+    public static Levels smooth(Levels from,Levels target,int frames,float rate) {
+        if(frames<0 || !Float.isFinite(rate) || rate<=0)throw new IllegalArgumentException("Invalid audio duration");
+        double amount=-Math.expm1(-frames/(rate*.065));
+        return new Levels((float)(from.gain+(target.gain-from.gain)*amount),
+                (float)(from.pan+(target.pan-from.pan)*amount));
+    }
+
     public static int mix(byte[] input, int count, int channels, byte[] output, Levels from, Levels to) {
         if ((channels != 1 && channels != 2) || count < 0 || count > input.length
                 || count % (channels * 2) != 0 || output.length < count / (channels * 2) * 4) {
