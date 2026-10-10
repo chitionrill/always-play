@@ -26,6 +26,13 @@ public final class SpeakerWorldAudio {
         long acousticTime=-1;
         double extraPath;
         boolean wasCarried;
+        SpeakerEnergy.Transport energyJob;
+        SpeakerPropagation.Point energyOrigin,energyListener;
+        net.minecraft.core.BlockPos energySource,energyPartner;
+        long energyTime=-100;
+        List<SpeakerPropagation.Point> route=List.of();
+        SpeakerPropagation.Aperture aperture=SpeakerPropagation.Aperture.EMPTY;
+        List<SpeakerPropagation.Reflection> reflections=List.of();
         SpeakerPropagation.Job acousticJob;
         net.minecraft.core.BlockPos acousticSource,acousticPartner;
         Emitter(SpeakerPlayback.Snapshot s) { state=s; }
@@ -37,18 +44,20 @@ public final class SpeakerWorldAudio {
         if (world!=mc.level) { clear(); world=mc.level; }
         var e=sources.computeIfAbsent(packet.id(),id->new Emitter(packet));
         if (!e.state.track().equals(packet.track()) || Math.abs(e.state.epoch()-packet.epoch())>150 || !packet.enabled()) {
-            stop(e); e.ended=false;
+            stop(e,!packet.enabled()); e.ended=false;
         }
         e.state=packet; e.seen=ticks;
     }
     private static boolean terminal(SpeakerVoice v) {
         return v.status()==SpeakerVoice.Status.STOPPED || v.status()==SpeakerVoice.Status.FINISHED || v.status()==SpeakerVoice.Status.FAILED;
     }
-    private static void stop(Emitter e) {
-        if(e.voice!=null) { e.voice.close(); closing.add(e.voice); e.voice=null; }
+    private static void stop(Emitter e){stop(e,false);}
+    private static void stop(Emitter e,boolean tail) {
+        e.energyJob=null;e.energyTime=-100;e.reflections=List.of();
+        if(e.voice!=null) { if(tail)e.voice.release();else e.voice.close(); closing.add(e.voice); e.voice=null; }
     }
     public static void clear() {
-        sources.values().forEach(SpeakerWorldAudio::stop); sources.clear(); world=null;
+        sources.values().forEach(SpeakerWorldAudio::stop); sources.clear();closing.forEach(SpeakerVoice::close);world=null;
     }
     private static boolean carried(Minecraft mc,UUID id) {
         var cursor=mc.player.containerMenu.getCarried();
@@ -66,9 +75,12 @@ public final class SpeakerWorldAudio {
         if(!mc.isPaused()) ticks++;
         if(ticks%20==0) SpeakerTracks.poll();
         // Rotate service order so busy scenes do not starve the same emitters.
-        long acousticDeadline=System.nanoTime()+3_000_000L;
+        long totalDeadline=System.nanoTime()+3_000_000L;
+        long acousticDeadline=totalDeadline-750_000L;
         var ordered=new ArrayList<>(sources.values());
         if(!ordered.isEmpty())Collections.rotate(ordered,-(int)(ticks%ordered.size()));
+        // Oldest audible update first; rotation above fairly breaks ties.
+        ordered.sort(Comparator.comparingLong(e->e.acousticTime));
         var it=ordered.iterator();
         while(it.hasNext()) {
             Emitter e=it.next(); var s=e.state;
@@ -99,7 +111,7 @@ public final class SpeakerWorldAudio {
             if(inInventory){sourceX=mc.player.getX();sourceY=mc.player.getEyeY()-.3;sourceZ=mc.player.getZ();}
             double dx=sourceX-mc.player.getX(),dy=sourceY-mc.player.getEyeY(),dz=sourceZ-mc.player.getZ();
             double distance=inInventory?0:Math.sqrt(dx*dx+dy*dy+dz*dz);
-            if(!s.enabled() || s.track().isEmpty() || distance>32) { stop(e); continue; }
+            if(!s.enabled() || s.track().isEmpty() || distance>32) { stop(e,!s.enabled()); continue; }
             var track=SpeakerTracks.find(s.track());
             if(track==null) continue;
             if(e.ended) {
@@ -129,7 +141,7 @@ public final class SpeakerWorldAudio {
             double yaw=Math.toRadians(mc.player.getYRot()),horizontal=Math.hypot(dx,dz);
             double pan=horizontal<.001?0:(-dx*Math.cos(yaw)-dz*Math.sin(yaw))/horizontal;
             {
-                if(e.wasCarried!=inInventory){e.acousticJob=null;e.acousticTime=-1;e.extraPath=0;e.wasCarried=inInventory;}
+                if(e.wasCarried!=inInventory){e.acousticJob=null;e.acousticTime=-1;e.extraPath=0;e.wasCarried=inInventory;e.energyJob=null;e.energyTime=-100;e.route=List.of();e.reflections=List.of();e.aperture=SpeakerPropagation.Aperture.EMPTY;}
                 var acousticSource=inInventory?net.minecraft.core.BlockPos.containing(sourceX,sourceY,sourceZ):s.pos();
                 var acousticPartner=inInventory?acousticSource:s.chestPartner();
                 if(e.acousticTime<0)e.acoustic=SpeakerPropagation.Result.SILENT;
@@ -137,19 +149,22 @@ public final class SpeakerWorldAudio {
                 var listener=new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ());
                 if(e.acousticJob!=null && (!e.acousticJob.near(origin,listener,24*s.volume())
                         || !acousticSource.equals(e.acousticSource) || !acousticPartner.equals(e.acousticPartner)))e.acousticJob=null;
+                e.energyOrigin=origin;e.energyListener=listener;e.energySource=acousticSource;e.energyPartner=acousticPartner;
                 if(System.nanoTime()<acousticDeadline) {
-                    if(e.acousticJob==null && (e.acousticTime<0 || ticks-e.acousticTime>=2)) {
+                    // The audible result always uses today's listener position, never a finished old search.
+                    var fresh=SpeakerAcoustics.begin(mc,sourceX,sourceY,sourceZ,acousticSource,acousticPartner,s.volume());
+                    var current=fresh.refresh(e.route,e.aperture);
+                    boolean changed=Math.abs(current.gain()-e.acoustic.gain())>.1 || Math.abs(current.cutoff()-e.acoustic.cutoff())>2000;
+                    if(changed){e.reflections=List.of();e.energyJob=null;e.energyTime=-100;}
+                    e.acoustic=new SpeakerPropagation.Result(current.distance(),current.gain(),current.cutoff(),current.arrival(),e.reflections);
+                    e.extraPath=inInventory?0:Math.max(0,current.distance()-fresh.directDistance());
+                    e.acousticTime=ticks;
+                    if(!fresh.route().isEmpty())e.route=fresh.route();
+                    if(e.acousticJob==null) {
                         e.acousticJob=SpeakerAcoustics.begin(mc,sourceX,sourceY,sourceZ,acousticSource,acousticPartner,s.volume());
                         e.acousticSource=acousticSource;e.acousticPartner=acousticPartner;
                     }
-                    if(e.acousticJob!=null && e.acousticJob.advance(64,acousticDeadline)) {
-                        e.acoustic=e.acousticJob.result();
-                        e.extraPath=inInventory?0:Math.max(0,e.acoustic.distance()-e.acousticJob.directDistance());
-                        e.acousticTime=ticks;e.acousticJob=null;
-                    } else if(e.acousticTime<0 && e.acousticJob!=null && e.acousticJob.provisional()!=null) {
-                        // A fully traced direct path is safe to hear while the detour search continues.
-                        e.acoustic=e.acousticJob.provisional();e.extraPath=0;e.acousticTime=ticks;
-                    }
+
                 }
             }
             if(!inInventory && e.acoustic.arrival()!=null) {
@@ -169,10 +184,37 @@ public final class SpeakerWorldAudio {
             if(inShell)openness=((net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity)mc.level.getBlockEntity(s.pos())).getProgress(1);
             if(inEnder && mc.level.getBlockEntity(s.pos()) instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity enderChest)
                 openness=enderChest.getOpenNess(1);
+            var water=SpeakerWaterWorld.measure(mc,new SpeakerPropagation.Point(sourceX,sourceY,sourceZ),
+                    new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ()),
+                    inInventory?List.of():e.route,!inInventory&&!onGround);
             e.voice.update(new SpeakerVoice.Control(levels,mc.isPaused(),inChest && !inInventory,
                     openness,!s.pos().equals(s.chestPartner()),inChest && mc.level.getBlockState(s.pos()).getBlock()
-                    instanceof net.minecraft.world.level.block.CopperChestBlock,s.shell(),s.ender(),e.acoustic.gain(),e.acoustic.cutoff(),e.acoustic.reflections()));
+                    instanceof net.minecraft.world.level.block.CopperChestBlock,s.shell(),s.ender(),e.acoustic.gain(),e.acoustic.cutoff(),e.reflections,water));
             if(e.voice.status()==SpeakerVoice.Status.NEW)e.voice.start();
         }
+        // Every voice receives its current control before any expensive background search.
+        // Rotate this list independently: oldest direct update must not also monopolize background work.
+        var background=new ArrayList<>(sources.values());
+        if(!background.isEmpty())Collections.rotate(background,-(int)(ticks%background.size()));
+        var tasks=new ArrayList<SpeakerWorkQueue.Task>();
+        for(var e:background){
+            if(e.voice==null || e.energyOrigin==null)continue;
+            if(e.acousticJob!=null)tasks.add(deadline->{
+                if(e.acousticJob.advance(256,deadline)){
+                    if(!e.acousticJob.route().isEmpty())e.route=e.acousticJob.route();
+                    if(!e.acousticJob.aperture().paths().isEmpty())e.aperture=e.acousticJob.aperture();
+                    e.acousticJob=null;
+                }
+            });
+            if(e.energyJob!=null && !e.energyJob.near(e.energyOrigin,e.energyListener))e.energyJob=null;
+            if(e.energyJob!=null || ticks-e.energyTime>=10)tasks.add(deadline->{
+                if(e.energyJob==null)
+                    e.energyJob=SpeakerAcoustics.energy(mc,e.energyOrigin,e.energyListener,e.energySource,e.energyPartner);
+                if(e.energyJob.advance(256,deadline)){
+                    e.reflections=e.energyJob.response();e.energyTime=ticks;e.energyJob=null;
+                } else if(ticks%2==0)e.reflections=e.energyJob.preview();
+            });
+        }
+        SpeakerWorkQueue.service(tasks,totalDeadline,System::nanoTime);
     }
 }

@@ -6,17 +6,28 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.phys.AABB;
 import soke.musicdelay.client.speaker.audio.SpeakerPropagation;
+import soke.musicdelay.client.speaker.audio.SpeakerEnergy;
 
 /** Client-thread world access only. The worker receives immutable path parameters and reflection taps. */
 public final class SpeakerAcoustics {
-    private record Material(List<AABB> shapes,double loss,double reflection) { }
+    private record Material(List<AABB> shapes,double loss,double reflection,SpeakerEnergy.Voxel voxel) { }
     private SpeakerAcoustics() { }
     public static SpeakerPropagation.Job begin(Minecraft mc,double x,double y,double z,BlockPos source,BlockPos partner,float volume) {
+        return new SpeakerPropagation(field(mc,source,partner)).begin(new SpeakerPropagation.Point(x,y,z),new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ()),24*volume);
+    }
+    public static SpeakerEnergy.Transport energy(Minecraft mc,SpeakerPropagation.Point sourcePoint,SpeakerPropagation.Point listener,BlockPos source,BlockPos partner){
+        return new SpeakerEnergy.Transport(field(mc,source,partner),sourcePoint,listener);
+    }
+    private static Material material(List<AABB> shapes,double loss,double reflection){
+        var boxes=shapes.stream().map(b->new SpeakerEnergy.Box(b.minX,b.minY,b.minZ,b.maxX,b.maxY,b.maxZ)).toList();
+        return new Material(shapes,loss,reflection,new SpeakerEnergy.Voxel(boxes,new SpeakerEnergy.Material(loss,reflection)));
+    }
+    private static SpeakerPropagation.Field field(Minecraft mc,BlockPos source,BlockPos partner){
         var cache=new HashMap<BlockPos,Material>();
-        var field=new SpeakerPropagation.Field() {
+        return new SpeakerPropagation.Field() {
             private Material material(BlockPos pos) {
                 return cache.computeIfAbsent(pos,p->{
-                    if(!mc.level.isLoaded(p))return new Material(List.of(new AABB(0,0,0,1,1,1)),8,0);
+                    if(!mc.level.isLoaded(p))return SpeakerAcoustics.material(List.of(new AABB(0,0,0,1,1,1)),8,0);
                     var state=mc.level.getBlockState(p);
                     double loss=1.35,reflection=.70;
                     if(state.is(BlockTags.WOOL) || state.is(BlockTags.WOOL_CARPETS)){loss=2.4;reflection=.06;}
@@ -35,8 +46,12 @@ public final class SpeakerAcoustics {
                         String name=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
                         reflection=name.contains("copper") || name.contains("iron")?.85:.38;
                     }
-                    return new Material(state.getCollisionShape(mc.level,p).toAabbs(),loss,reflection);
+                    return SpeakerAcoustics.material(state.getCollisionShape(mc.level,p).toAabbs(),loss,reflection);
                 });
+            }
+            @Override public SpeakerEnergy.Voxel voxel(int x,int y,int z){
+                var pos=new BlockPos(x,y,z);
+                return pos.equals(source)||pos.equals(partner)?SpeakerEnergy.Voxel.AIR:material(pos).voxel;
             }
             @Override public double reflection(double x,double y,double z){return material(BlockPos.containing(x,y,z)).reflection;}
             @Override public double loss(double px,double py,double pz){
@@ -49,6 +64,5 @@ public final class SpeakerAcoustics {
                 return 0;
             }
         };
-        return new SpeakerPropagation(field).begin(new SpeakerPropagation.Point(x,y,z),new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ()),24*volume);
     }
 }

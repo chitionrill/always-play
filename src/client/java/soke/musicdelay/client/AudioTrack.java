@@ -55,6 +55,16 @@ public class AudioTrack {
         }
     }
 
+    /** Transfer stream ownership to a rate-converted view for the speaker bus. */
+    public AudioTrack resample(float rate) throws Exception {
+        if(!Float.isFinite(rate)||rate<=0)throw new IllegalArgumentException("Invalid sample rate");
+        if(sampleRate==rate)return this;
+        var target=new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,rate,16,channels,channels*2,rate,false);
+        if(!AudioSystem.isConversionSupported(target,stream.getFormat()))
+            throw new UnsupportedAudioFileException("Cannot convert speaker sample rate: "+stream.getFormat());
+        return new AudioTrack(AudioSystem.getAudioInputStream(target,stream));
+    }
+
     public float getSampleRate() { return sampleRate; }
     public int getChannels() { return channels; }
     public boolean isFinished() { return finished; }
