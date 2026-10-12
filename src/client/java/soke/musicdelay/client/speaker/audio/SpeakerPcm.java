@@ -14,18 +14,16 @@ public final class SpeakerPcm {
         public static final Levels SILENT = new Levels(0, 0);
     }
 
-    /** The range falls with speaker volume; occlusion/reflections are a later layer. */
-    public static Levels spatial(double distance, double right, float volume,
-                                 float maxRadius, float master, float records, boolean carriedByListener) {
-        if (!Double.isFinite(distance) || distance < 0 || !Double.isFinite(right)
-                || !Float.isFinite(maxRadius) || maxRadius <= 0) {
-            throw new IllegalArgumentException("Invalid source geometry");
-        }
-        unit(volume); unit(master); unit(records);
-        double radius = maxRadius * volume;
-        float gain = radius <= 0 || distance >= radius ? 0
-                : (float) (volume * master * records * Math.pow(1 - distance / radius, 2));
-        return new Levels(gain, carriedByListener ? 0 : (float) Math.clamp(right, -1, 1));
+    /** Compatibility overload: the former radius no longer controls audibility. */
+    public static Levels spatial(double distance,double right,float volume,float legacyRadius,float master,float records,boolean carriedByListener){
+        if(!Float.isFinite(legacyRadius)||legacyRadius<=0)throw new IllegalArgumentException();
+        return spatial(distance,right,volume,master,records,carriedByListener);
+    }
+    public static Levels spatial(double distance,double right,float volume,float master,float records,boolean carriedByListener){
+        if(!Double.isFinite(distance)||distance<0||!Double.isFinite(right))throw new IllegalArgumentException();
+        unit(volume);unit(master);unit(records);
+        float gain=(float)SpeakerDistance.gain(distance,volume*master*records);
+        return new Levels(gain,carriedByListener?0:(float)Math.clamp(right,-1,1));
     }
 
     /** Continue approaching the latest game-tick target on every audio buffer. */

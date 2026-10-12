@@ -13,16 +13,27 @@ import net.minecraft.world.level.block.Blocks;
 /** The player's private storage is the source; the nearest loaded chest is only its audible outlet. */
 public final class SpeakerEnder {
     private static final Map<UUID,Set<UUID>> previous=new HashMap<>();
+    private static final Map<UUID,OutletSearch> outlets=new HashMap<>();
+    private static final class OutletSearch {
+        int x,z,radius,cursor;
+        BlockPos best;
+        final List<int[]> chunks=new ArrayList<>();
+        void centre(int cx,int cz,int r){
+            x=cx;z=cz;radius=r;cursor=0;chunks.clear();
+            for(int dx=-r;dx<=r;dx++)for(int dz=-r;dz<=r;dz++)chunks.add(new int[]{dx,dz});
+            chunks.sort(Comparator.comparingInt(a->a[0]*a[0]+a[1]*a[1]));
+        }
+    }
     private SpeakerEnder() { }
     public static void register() {
-        ServerLifecycleEvents.SERVER_STOPPED.register(server->previous.clear());
+        ServerLifecycleEvents.SERVER_STOPPED.register(server->{previous.clear();outlets.clear();});
         ServerTickEvents.END_SERVER_TICK.register(server->{
             if(!server.isSingleplayer())return;
             Set<UUID> connected=new HashSet<>();
             for(var player:server.getPlayerList().getPlayers())if(server.isSingleplayerOwner(player.nameAndId())) {
                 connected.add(player.getUUID());tick(player);
             }
-            previous.keySet().retainAll(connected);
+            previous.keySet().retainAll(connected);outlets.keySet().retainAll(connected);
         });
     }
     private static long order(ItemStack item) {return item.getOrDefault(DataComponents.CUSTOM_DATA,CustomData.EMPTY).copyTag().getLong("always_play_ender_order").orElse(0L);}
@@ -38,21 +49,26 @@ public final class SpeakerEnder {
         return items;
     }
     private static BlockPos nearest(ServerPlayer player) {
-        var centre=player.blockPosition();BlockPos best=null;double distance=32*32;
-        var chunks=player.level().getChunkSource();
-        // Inspect only existing block entities in 25 already-loaded chunks, never a 65-cubed block scan.
-        for(int x=(centre.getX()>>4)-2;x<=(centre.getX()>>4)+2;x++)
-            for(int z=(centre.getZ()>>4)-2;z<=(centre.getZ()>>4)+2;z++) {
-                var chunk=chunks.getChunkNow(x,z);if(chunk==null)continue;
-                for(var entity:chunk.getBlockEntities().values()) {
-                    if(!(entity instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity) || entity.isRemoved())continue;
-                    var pos=entity.getBlockPos();
-                    double d=player.getEyePosition().distanceToSqr(net.minecraft.world.phys.Vec3.atCenterOf(pos));
-                    if(d<distance) { best=pos.immutable();distance=d; }
-                }
+        var centre=player.blockPosition();int x=centre.getX()>>4,z=centre.getZ()>>4;
+        int radius=Math.clamp(player.level().getServer().getPlayerList().getViewDistance(),2,32);
+        var search=outlets.computeIfAbsent(player.getUUID(),id->new OutletSearch());
+        if(search.chunks.isEmpty()||search.x!=x||search.z!=z||search.radius!=radius)search.centre(x,z,radius);
+        if(search.best!=null && (!player.level().isLoaded(search.best)||!player.level().getBlockState(search.best).is(Blocks.ENDER_CHEST)))search.best=null;
+        double distance=search.best==null?Double.POSITIVE_INFINITY:player.getEyePosition().distanceToSqr(net.minecraft.world.phys.Vec3.atCenterOf(search.best));
+        var chunks=player.level().getChunkSource();long deadline=System.nanoTime()+1_000_000L;
+        // Discovery is sliced; an already discovered outlet is not discarded at a radius boundary.
+        for(int n=0;n<64 && System.nanoTime()<deadline;n++){
+            if(search.cursor>=search.chunks.size()){search.cursor=0;break;}
+            var offset=search.chunks.get(search.cursor++);var chunk=chunks.getChunkNow(x+offset[0],z+offset[1]);if(chunk==null)continue;
+            for(var entity:chunk.getBlockEntities().values()){
+                if(!(entity instanceof net.minecraft.world.level.block.entity.EnderChestBlockEntity)||entity.isRemoved())continue;
+                var pos=entity.getBlockPos();double d=player.getEyePosition().distanceToSqr(net.minecraft.world.phys.Vec3.atCenterOf(pos));
+                if(d<distance){search.best=pos.immutable();distance=d;}
             }
-        return best;
+        }
+        return search.best;
     }
+
     private static void tick(ServerPlayer player) {
         var items=items(player);var before=previous.get(player.getUUID());var now=new HashSet<UUID>();
         long max=items.stream().mapToLong(SpeakerEnder::order).max().orElse(0);

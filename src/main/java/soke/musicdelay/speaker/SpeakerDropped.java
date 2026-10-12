@@ -52,13 +52,13 @@ public final class SpeakerDropped {
         for(var stack:view.items)SpeakerData.read(stack).ifPresent(s->{
             var packet=new SpeakerPlayback.Snapshot(item.blockPosition(),s.id(),s.trackReference(),s.positionMillis(),
                     level.getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),false,item.getId(),false,item.blockPosition(),view.nested.contains(stack));
-            for(var player:level.players())if(level.getServer().isSingleplayerOwner(player.nameAndId()) && player.distanceToSqr(item)<4096
+            for(var player:level.players())if(level.getServer().isSingleplayerOwner(player.nameAndId())
                     && ServerPlayNetworking.canSend(player,SpeakerPlayback.Snapshot.TYPE))ServerPlayNetworking.send(player,packet);
         });
     }
     public static boolean finish(ServerPlayer player,SpeakerPlayback.End packet) {
         for(var item:loaded.keySet()) {
-            if(item.isRemoved() || item.level()!=player.level() || player.distanceToSqr(item)>4096)continue;
+            if(item.isRemoved() || item.level()!=player.level())continue;
             var view=view(item);
             for(var stack:view.items) {
                 var state=SpeakerData.read(stack);if(state.isEmpty() || !state.get().id().equals(packet.id()))continue;

@@ -3,7 +3,7 @@ package soke.musicdelay.client.speaker.audio;
 import java.util.*;
 import soke.musicdelay.client.speaker.audio.SpeakerPropagation.Point;
 
-/** Energy-domain transport. Coefficients are power fractions, never PCM amplitudes. */
+/** Energy transport. Split values are power fractions; direct/response spectra are pressure amplitudes. */
 public final class SpeakerEnergy {
     public static final int BINS=48,RAYS=48,MAX_BOUNCES=48;
     public static final double MAX_SECONDS=3,EPS=.002;
@@ -16,14 +16,31 @@ public final class SpeakerEnergy {
         public double max(){return Math.max(low,Math.max(mid,high));}
         public double at(int i){return i==0?low:i==1?mid:high;}
     }
+    /** Effective solid-layer impedance plus broadband bulk loss. Density is a game
+     * material coefficient, not SI mass. The direct beam uses an effective
+     * integrated barrier; reflected packets use each encountered layer.
+     * This does not model panel resonances or double-wall cavities.
+     * Air travel and open paths never use this wall model. */
+    public static Bands transmissionAmplitudes(double depth){
+        if(Double.isNaN(depth)||depth<0)throw new IllegalArgumentException();
+        if(depth==Double.POSITIVE_INFINITY)return Bands.ZERO;
+        double bulk=Math.exp(-.15*depth);
+        return new Bands(bulk/Math.hypot(1,1.2*depth),bulk/Math.hypot(1,3*depth),bulk/Math.hypot(1,9*depth));
+    }
+    public static Bands bounded(Bands value){return new Bands(Math.min(1,value.low),Math.min(1,value.mid),Math.min(1,value.high));}
+    /** Informational scalar only. The audio path consumes the full spectrum. */
+    public static float equivalentCutoff(Bands value){
+        if(value.mid>=.999999 && value.high>=.999999)return 20000;
+        return (float)Math.clamp(12000*value.high/Math.max(1e-12,value.mid),250,20000);
+    }
     public record Split(Bands transmitted,Bands reflected,Bands absorbed) { }
     public record Material(double density,double reflectable) {
         public Material {if(!Double.isFinite(density)||density<0||!Double.isFinite(reflectable)||reflectable<0||reflectable>1)throw new IllegalArgumentException();}
         public Split split(double thickness){
             if(!Double.isFinite(thickness)||thickness<0)throw new IllegalArgumentException();
-            double[] t=new double[3],r=new double[3],a=new double[3];double[] factors={.55,1,1.8};
+            double[] t=new double[3],r=new double[3],a=new double[3];var amplitude=transmissionAmplitudes(density*thickness);
             for(int i=0;i<3;i++){
-                t[i]=Math.exp(-2*density*factors[i]*thickness);
+                t[i]=amplitude.at(i)*amplitude.at(i);
                 double share=Math.clamp(reflectable*(i==0?1.08:i==2?.78:1),0,1);
                 r[i]=(1-t[i])*share;a[i]=Math.max(0,1-t[i]-r[i]);
             }
@@ -87,7 +104,7 @@ public final class SpeakerEnergy {
     }
     public static double delay(int bin){return .001*Math.pow(MAX_SECONDS/.001,bin/(double)(BINS-1));}
     private static int bin(double seconds){return Math.clamp((int)Math.round(Math.log(Math.max(.001,seconds)/.001)/Math.log(MAX_SECONDS/.001)*(BINS-1)),0,BINS-1);}
-    /** Direct absorption uses the same spectral density ratios as boundary transmission. */
+    /** Legacy gain/cutoff adapter. Live world audio supplies explicit spectral amplitudes. */
     public static Bands direct(float gain,float cutoff){
         double g=Math.clamp(gain,0,1);
         return new Bands(Math.pow(g,.55),g*Math.min(1,cutoff/3500.0),Math.pow(g,1.8)*Math.min(1,cutoff/12000.0));
@@ -96,7 +113,7 @@ public final class SpeakerEnergy {
         private record Packet(Point position,Point direction,Bands power,double length,int bounce,int seed,long sequence) { }
         private final SpeakerPropagation.Field field;
         private final Point source,listener;
-        private final double[][] energy=new double[BINS][3];
+        private final double[][] energy=new double[BINS][3],arrival=new double[BINS][4];
         private final PriorityQueue<Packet> pending=new PriorityQueue<>(Comparator.<Packet>comparingDouble(p->-p.power.max()).thenComparingLong(Packet::sequence));
         private Bands absorbed=Bands.ZERO,unresolved=Bands.ZERO,escaped=Bands.ZERO,captured=Bands.ZERO;
         private Bands queued=Bands.ONE;
@@ -144,6 +161,8 @@ public final class SpeakerEnergy {
                 double fraction=Math.min(.35,.25*cosine/(1+distance*distance));
                 Bands received=packet.scale(fraction);captured=captured.add(received);packet=packet.scale(1-fraction);
                 int index=bin(seconds);for(int i=0;i<3;i++)energy[index][i]+=received.at(i);
+                double weight=received.low()+received.mid()+received.high();
+                arrival[index][0]+=airPoint.x()*weight;arrival[index][1]+=airPoint.y()*weight;arrival[index][2]+=airPoint.z()*weight;arrival[index][3]+=weight;
             }
             Point reflected=state.direction.sub(hit.normal.scale(2*state.direction.dot(hit.normal)));
             double t=(state.seed*37+(state.bounce+1)*17)*2.399963229728653;
@@ -157,7 +176,7 @@ public final class SpeakerEnergy {
             double reference=.25/(1+Math.pow(source.distance(listener),2));
             for(int i=0;i<BINS;i++){
                 var amplitude=new Bands(Math.sqrt(energy[i][0]/reference),Math.sqrt(energy[i][1]/reference),Math.sqrt(energy[i][2]/reference));
-                if(amplitude.max()>1e-5)taps.add(new SpeakerPropagation.Reflection(i,delay(i),(float)amplitude.mid,20000,amplitude));
+                if(amplitude.max()>1e-5)taps.add(new SpeakerPropagation.Reflection(i,delay(i),(float)amplitude.mid,20000,amplitude,arrival[i][3]>0?new Point(arrival[i][0]/arrival[i][3],arrival[i][1]/arrival[i][3],arrival[i][2]/arrival[i][3]):null,0));
             }
             return List.copyOf(taps);
         }

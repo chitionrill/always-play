@@ -14,8 +14,9 @@ public final class SpeakerMixer {
     @FunctionalInterface public interface Factory { Device open() throws Exception; }
     private static final SpeakerMixer SHARED=new SpeakerMixer(()->{
         var line=AudioSystem.getSourceDataLine(new AudioFormat(RATE,16,2,true,false));
-        try {line.open(new AudioFormat(RATE,16,2,true,false),BLOCK*4*4);}
+        try {line.open(new AudioFormat(RATE,16,2,true,false),4096*4);}
         catch(Exception e){line.close();throw e;}
+        if(SpeakerDiagnostics.recording())SpeakerDiagnostics.event("device-open","rate="+RATE+" bufferFrames="+line.getBufferSize()/4);
         return new Device(){
             public int available(){return line.available();}
             public int write(byte[] b,int o,int n){return line.write(b,o,n);}
@@ -29,8 +30,9 @@ public final class SpeakerMixer {
     private final List<Port> ports=new ArrayList<>();
     private Thread worker;
     public SpeakerMixer(Factory factory){this.factory=Objects.requireNonNull(factory);}
-    public synchronized Port open(){
-        var p=new Port();ports.add(p);
+    public Port open(){return open("anonymous");}
+    public synchronized Port open(String label){
+        var p=new Port(label);ports.add(p);
         if(worker==null){worker=new Thread(this::run,"always-play-speaker-mixer");worker.setDaemon(true);worker.start();}
         return p;
     }
@@ -38,7 +40,21 @@ public final class SpeakerMixer {
     public final class Port implements AutoCloseable {
         private final short[] ring=new short[CAPACITY*2];
         private int read,size;
-        private boolean paused,closed;
+        private boolean paused,closed,finished;
+        private final String label;
+        private long emptySince,lastReport;
+        private Port(String label){this.label=label;}
+        public synchronized void finish(){finished=true;}
+        private synchronized void observe(long now){
+            if(paused||closed||finished||consumed==0){emptySince=0;return;}
+            if(size==0){
+                if(emptySince==0)emptySince=now;
+                if(now-emptySince>50_000_000L && now-lastReport>5_000_000_000L){
+                    soke.musicdelay.MusicDelayReducer.LOGGER.warn("[AlwaysPlay audio] queue-starved {}: {}ms without ready PCM, consumed={} frames",label,(now-emptySince)/1_000_000,consumed);
+                    lastReport=now;
+                }
+            }else emptySince=0;
+        }
         private volatile Exception failure;
         private long consumed,played;
         private final ArrayDeque<Span> spans=new ArrayDeque<>();
@@ -59,6 +75,8 @@ public final class SpeakerMixer {
         public synchronized boolean drained(){return size==0&&spans.isEmpty();}
         private synchronized boolean ready(){return !closed&&!paused&&size>0;}
         private synchronized boolean active(){return !closed&&!paused;}
+        private synchronized boolean expectingAudio(){return !closed&&!paused&&!finished&&consumed>0;}
+        private synchronized int queuedFrames(){return size;}
         private synchronized void mix(int[] sum,int frames,long deviceStart){
             if(closed||paused)return;
             int count=Math.min(frames,size);
@@ -77,7 +95,8 @@ public final class SpeakerMixer {
     private void run(){
         Device device=null;
         try{
-            device=factory.open();long written=0;boolean running=false;
+            device=factory.open();long written=0,lastLoop=System.nanoTime(),lastGapReport=0;
+            long lastDiagnostic=0;long lastDryReport=0,dryEpisodes=0;boolean dry=false,running=false;
             int[] sum=new int[BLOCK*2];byte[] output=new byte[BLOCK*4];
             while(true){
                 List<Port> current;
@@ -85,9 +104,33 @@ public final class SpeakerMixer {
                     if(ports.isEmpty()){worker=null;return;}
                     current=List.copyOf(ports);
                 }
-                long played=device.played();for(var p:current)p.progress(played);
+                long played=device.played(),now=System.nanoTime();for(var p:current){p.progress(played);p.observe(now);}
                 boolean active=current.stream().anyMatch(Port::active);
+                if(active && running && now-lastLoop>100_000_000L && now-lastGapReport>5_000_000_000L){
+                    soke.musicdelay.MusicDelayReducer.LOGGER.warn("[AlwaysPlay audio] mixer-loop-gap: {}ms, queued device frames={}, sources={}",(now-lastLoop)/1_000_000,Math.max(0,written-played),current.size());lastGapReport=now;
+                }
+                if(SpeakerDiagnostics.recording() && now-lastDiagnostic>=500_000_000L){
+                    SpeakerDiagnostics.event("mixer","loopGapNs="+(now-lastLoop)+" queuedDeviceFrames="+Math.max(0,written-played)+" readyPcmFrames="+current.stream().mapToInt(Port::queuedFrames).sum()+" sources="+current.size()+" running="+running);
+                    lastDiagnostic=now;
+                }
+                if(SpeakerDiagnostics.recording() && running && now-lastLoop>20_000_000L)
+                    SpeakerDiagnostics.event("mixer-gap","ns="+(now-lastLoop)+" queuedDeviceFrames="+Math.max(0,written-played));
+                lastLoop=now;
                 boolean ready=current.stream().anyMatch(Port::ready);
+                // Observe device queue depletion, including short gaps hidden by the old 50 ms probe.
+                // This is diagnostic only; startup/pause/EOF are excluded where known.
+                boolean depleted=running && written>0 && played>=written
+                        && current.stream().anyMatch(Port::expectingAudio);
+                if(depleted && !dry){
+                    dryEpisodes++;
+                    if(SpeakerDiagnostics.recording())SpeakerDiagnostics.event("device-empty","readyPcmFrames="+current.stream().mapToInt(Port::queuedFrames).sum());
+                }
+                dry=depleted;
+                if(dryEpisodes>0 && now-lastDryReport>=5_000_000_000L){
+                    soke.musicdelay.MusicDelayReducer.LOGGER.warn("[AlwaysPlay audio] device-queue-empty: episodes={}, ready PCM frames={}, sources={} (possible underrun)",
+                            dryEpisodes,current.stream().mapToInt(Port::queuedFrames).sum(),current.size());
+                    dryEpisodes=0;lastDryReport=now;
+                }
                 if(!active){if(running){device.stop();running=false;}Thread.sleep(2);continue;}
                 if(!running){device.start();running=true;}
                 // A slow/empty producer does not hold up other sources. Let the device drain at EOF.

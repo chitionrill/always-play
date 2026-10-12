@@ -53,7 +53,7 @@ public final class SpeakerPlayback {
         ServerPlayNetworking.registerGlobalReceiver(End.TYPE,(p,c)->c.server().execute(()->{
             var player=c.player(); var level=player.level();
             if (!c.server().isSingleplayer() || !c.server().isSingleplayerOwner(player.nameAndId())
-                    || !level.isLoaded(p.pos) || player.distanceToSqr(p.pos.getX()+.5,p.pos.getY()+.5,p.pos.getZ()+.5)>4096) return;
+                    || !level.isLoaded(p.pos)) return;
             if (SpeakerInventory.finish(player,p)) return;
             if (SpeakerDropped.finish(player,p)) return;
             if (SpeakerChest.finish(player,p)) return;
@@ -70,12 +70,11 @@ public final class SpeakerPlayback {
     }
     public static void tick(Level level, BlockPos pos, BlockState block, SpeakerBlockEntity be) {
         if (!(level instanceof ServerLevel server) || !server.getServer().isSingleplayer()) return;
-        // Snapshots are bounded by loaded ticking blocks and listener distance, not a scan of the world.
+        // Snapshots are bounded by loaded ticking blocks, not a scan of the world.
         if (level.getGameTime()%5==0) SpeakerData.read(be.itemCopy()).ifPresent(s->{
             var packet=new Snapshot(pos,s.id(),s.trackReference(),s.positionMillis(),
                     level.getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),false,-1);
             for (var player:server.players()) if (server.getServer().isSingleplayerOwner(player.nameAndId())
-                    && player.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<4096
                     && ServerPlayNetworking.canSend(player,Snapshot.TYPE)) { ServerPlayNetworking.send(player,packet); SpeakerNetworking.refreshBlock(player,pos,s); }
         });
         be.advancePosition();

@@ -36,7 +36,19 @@ public class ConfigScreen extends Screen {
     private static final int CONTENT_TOP = 35;
     private static final int BOTTOM_MARGIN = 10;
     private static final int SCROLL_STEP = 20;
-    private static final int TOTAL_ROWS = 17;
+    private static final int TOTAL_ROWS = 19;
+    private Button diagnosticButton,diagnosticFolderButton;
+    private static Path diagnosticFolder(){return net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("logs/always-play");}
+    private static Component diagnosticLabel(){return Component.literal(soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.recording()?"Остановить запись отчёта":soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.busy()?"Сохранение отчёта…":"Записать отчёт об ошибке");}
+    @Override public void tick(){
+        super.tick();
+        if(diagnosticButton!=null){
+            diagnosticButton.setMessage(diagnosticLabel());
+            diagnosticButton.active=!soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.busy()||soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.recording();
+            diagnosticButton.setTooltip(Tooltip.create(Component.literal(soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.status()+"\nДо 10 минут / 16 МБ. Начать запись, закрыть меню, повторить проблему и остановить запись.\n"+diagnosticFolder())));
+            diagnosticFolderButton.active=java.nio.file.Files.isDirectory(diagnosticFolder());
+        }
+    }
 
     private final @Nullable Screen parent;
     private final ModConfig config;
@@ -242,6 +254,16 @@ public class ConfigScreen extends Screen {
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.cache.title"),
                         b -> this.minecraft.gui.setScreen(new AudioCacheScreen(this)))
                 .bounds(centerX - 100, rowY(row++), 200, 20).build());
+
+        diagnosticButton=Button.builder(diagnosticLabel(),b->{
+            if(soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.recording())soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.stop();
+            else soke.musicdelay.client.speaker.audio.SpeakerDiagnostics.start(diagnosticFolder());
+        }).bounds(centerX-100,rowY(row++),200,20).build();
+        this.addRenderableWidget(diagnosticButton);
+        diagnosticFolderButton=Button.builder(Component.literal("Открыть папку отчётов"),b->SDLMisc.SDL_OpenURL(diagnosticFolder().toAbsolutePath().toUri().toString()))
+                .bounds(centerX-100,rowY(row++),200,20).build();
+        diagnosticFolderButton.active=java.nio.file.Files.isDirectory(diagnosticFolder());
+        this.addRenderableWidget(diagnosticFolderButton);
 
         this.addRenderableWidget(Button.builder(Component.translatable("music-delay-reducer.config.save"), button -> {
             config.minDelaySeconds = Math.min(minSeconds, maxSeconds);

@@ -7,7 +7,8 @@ import soke.musicdelay.client.speaker.audio.SpeakerPropagation.Point;
 public final class SpeakerWater {
     @FunctionalInterface public interface Field { boolean water(double x,double y,double z); }
     public record Path(double waterLength,int boundaries) { }
-    public record Profile(SpeakerEnergy.Bands transmission,boolean listenerWet,boolean crossesSurface) {
+    public record Profile(SpeakerEnergy.Bands transmission,boolean listenerWet,boolean crossesSurface,boolean sourceWet) {
+        public Profile(SpeakerEnergy.Bands transmission,boolean listenerWet,boolean crossesSurface){this(transmission,listenerWet,crossesSurface,crossesSurface&&!listenerWet);}
         public static final Profile DRY=new Profile(SpeakerEnergy.Bands.ONE,false,false);
         public Profile(SpeakerEnergy.Bands transmission,boolean listenerWet){this(transmission,listenerWet,false);}
         public Profile { Objects.requireNonNull(transmission); if(transmission.max()>1)throw new IllegalArgumentException(); }
@@ -17,7 +18,7 @@ public final class SpeakerWater {
     }
     private SpeakerWater() { }
     public static Profile profile(boolean sourceWet,boolean listenerWet,Path path){
-        return new Profile(attenuation(sourceWet,listenerWet,path),listenerWet,path.boundaries()>0);
+        return new Profile(attenuation(sourceWet,listenerWet,path),listenerWet,path.boundaries()>0,sourceWet);
     }
     public static Path measure(Field field,List<Point> route,boolean sourceWet,boolean listenerWet){
         if(route.size()<2 || route.size()>34)return new Path(0,sourceWet==listenerWet?0:1);
@@ -39,7 +40,11 @@ public final class SpeakerWater {
     }
     public static SpeakerEnergy.Bands attenuation(boolean sourceWet,boolean listenerWet,Path path){
         if(!Double.isFinite(path.waterLength)||path.waterLength<0||path.boundaries<0)throw new IllegalArgumentException();
-        int boundaries=Math.min(8,path.boundaries);
+        double boundaries=Math.min(8,path.boundaries);
+        // A thin water obstacle between dry endpoints must not instantly apply two full interfaces.
+        // This is a perceptual finite-thickness approximation; submerged endpoint profiles are unchanged.
+        if(!sourceWet && !listenerWet)
+            boundaries*=-Math.expm1(-path.waterLength/(2*Math.max(1,path.boundaries/2.0)));
         // Interface transmission and source coupling are separate from the listener's ears.
         // Audibility-oriented amplitude ratios, NOT impedance measurements or pressure dB.
         // At game distances water absorption of audible frequencies is small.
@@ -48,7 +53,7 @@ public final class SpeakerWater {
                 (sourceWet?.96:1)*Math.pow(.54,boundaries)*Math.exp(-.0005*path.waterLength),
                 (sourceWet?.96:1)*Math.pow(.42,boundaries)*Math.exp(-.001*path.waterLength));
     }
-    /** Post-environment filter: direct sound and its existing tail cross the surface together. */
+    /** Post-environment water filter. Dry endpoints retain only path attenuation, not submerged coloration. */
     public static final class Filter {
         private final int channels;
         private final double lowAlpha,highAlpha,smooth;
@@ -73,7 +78,7 @@ public final class SpeakerWater {
         public void process(byte[] pcm,int count,SpeakerEnergy.Bands target){process(pcm,count,new Profile(target,false));}
         public void process(byte[] pcm,int count,Profile profile){
             SpeakerEnergy.Bands target=profile.transmission();
-            double wet=profile.listenerWet()?1:0,crossing=profile.crossesSurface()?1:0;
+            double wet=profile.listenerWet()?1:0,crossing=profile.crossesSurface()&&(profile.sourceWet()||profile.listenerWet())?1:0;
             if(count<0||count>pcm.length||count%(channels*2)!=0||target.max()>1)throw new IllegalArgumentException();
             if(!initialized&&count>0){for(int b=0;b<3;b++)gains[b]=target.at(b);initialized=true;immersion=wet;surface=crossing;}
             for(int frame=0;frame<count;frame+=channels*2){

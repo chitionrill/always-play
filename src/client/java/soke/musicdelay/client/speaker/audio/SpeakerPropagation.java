@@ -21,11 +21,20 @@ public final class SpeakerPropagation {
         double dot(Point b){return x*b.x+y*b.y+z*b.z;}
     }
     /** Stable slot identifies a probe direction, avoiding randomly reassigned echo taps. */
-    public record Reflection(int slot,double seconds,float gain,float cutoff,SpeakerEnergy.Bands spectrum) {
+    public record Reflection(int slot,double seconds,float gain,float cutoff,SpeakerEnergy.Bands spectrum,Point arrival,float pan) {
+        public Reflection(int slot,double seconds,float gain,float cutoff,SpeakerEnergy.Bands spectrum){this(slot,seconds,gain,cutoff,spectrum,null,0);}
+        public Reflection withPan(float value){return new Reflection(slot,seconds,gain,cutoff,spectrum,arrival,value);}
         public Reflection(int slot,double seconds,float gain,float cutoff){this(slot,seconds,gain,cutoff,new SpeakerEnergy.Bands(gain,gain,gain*Math.min(1,cutoff/12000.0)));}
     }
-    public record Result(double distance,float gain,float cutoff,Point arrival,List<Reflection> reflections) {
-        public Result {reflections=List.copyOf(reflections);}
+    public record Result(double distance,float gain,float cutoff,Point arrival,List<Reflection> reflections,SpeakerEnergy.Bands spectrum) {
+        public Result {reflections=List.copyOf(reflections);Objects.requireNonNull(spectrum);}
+        public Result(double distance,float gain,float cutoff,Point arrival,List<Reflection> reflections){
+            this(distance,gain,cutoff,arrival,reflections,SpeakerEnergy.direct(gain,cutoff));
+        }
+        public static Result spectral(double distance,SpeakerEnergy.Bands bands,Point arrival,List<Reflection> reflections){
+            var bounded=SpeakerEnergy.bounded(bands);
+            return new Result(distance,(float)bounded.mid(),SpeakerEnergy.equivalentCutoff(bounded),arrival,reflections,bounded);
+        }
         public Result(double distance,float gain,float cutoff){this(distance,gain,cutoff,null,List.of());}
         public static final Result CLEAR=new Result(0,1,20000);
         public static final Result SILENT=new Result(0,0,20000);
@@ -45,13 +54,13 @@ public final class SpeakerPropagation {
     private static final int[][] DIRECTIONS={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     private final Field field;
     public SpeakerPropagation(Field field){this.field=Objects.requireNonNull(field);}
-    public Result solve(Point source,Point listener,double range){var job=begin(source,listener,range);while(!job.advance(256,Long.MAX_VALUE)){}return job.result();}
-    public Job begin(Point source,Point listener,double range){return new Job(source,listener,range);}
-    private static double falloff(double length,double range){return length>=range || range<=0?0:Math.pow(1-length/range,2);}
-    private static double score(Result result,double range){return result.gain*falloff(result.distance,range);}
+    public Result solve(Point source,Point listener,double strength){var job=begin(source,listener,strength);while(!job.advance(256,Long.MAX_VALUE)){}return job.result();}
+    public Job begin(Point source,Point listener,double strength){return new Job(source,listener,strength);}
+    private static double falloff(double length,double strength){return strength<=0?0:SpeakerDistance.gain(length,1);}
+    private static double score(Result result,double strength){return result.gain*falloff(result.distance,strength);}
     public final class Job {
         private final Point source,listener;
-        private final double range;
+        private final double strength;
         private final PriorityQueue<Step> queue=new PriorityQueue<>(Comparator.comparingDouble(Step::priority));
         private final Map<Cell,Double> best=new HashMap<>();
         private final Map<Cell,Point> parents=new HashMap<>();
@@ -59,6 +68,9 @@ public final class SpeakerPropagation {
         private final Map<Segment,Double> traces=new HashMap<>();
         private final List<Reflection> reflections=new ArrayList<>();
         private Result result,direct;
+        private long directProbeSignature;
+        private double directEffectiveDepth;
+        private String decision="direct";
         private Aperture aperture=Aperture.EMPTY;
         private final List<List<Point>> aperturePaths=new ArrayList<>();
         private Point apertureCenter;
@@ -68,11 +80,18 @@ public final class SpeakerPropagation {
         private List<Point> route=List.of();
         private boolean initialized,pathDone,done;
         private int samples,visited,probe;
-        private Job(Point source,Point listener,double range){this.source=source;this.listener=listener;this.range=range;}
+        private Job(Point source,Point listener,double strength){this.source=source;this.listener=listener;this.strength=strength;}
         public double directDistance(){return source.distance(listener);}
-        public boolean near(Point a,Point b,double r){return source.distance(a)<.75 && listener.distance(b)<6 && range==r;}
+        public boolean near(Point a,Point b,double r){return source.distance(a)<.75 && listener.distance(b)<6 && strength==r;}
         public boolean reflectionsNear(Point a,Point b){return source.distance(a)<.35 && listener.distance(b)<.35;}
         public Aperture aperture(){return aperture;}
+        /** Report model decisions, not just the final mixed level. No extra world queries. */
+        public String diagnostics(){
+            return "directTransmission="+(direct==null?-1:direct.gain)+" directCutoff="+(direct==null?-1:direct.cutoff)
+                    +" directBands="+(direct==null?SpeakerEnergy.Bands.ZERO:direct.spectrum)+" outputBands="+(result==null?SpeakerEnergy.Bands.ZERO:result.spectrum)+" directProbeSignature="+Long.toHexString(directProbeSignature)+" decision="+decision
+                    +" effectiveBarrierDepth="+directEffectiveDepth+" routePoints="+route.size()+" aperturePatches="+aperture.paths.size()+" apertureArea="+aperture.area
+                    +" traceSamples="+samples+" traceBudgetHit="+(samples>=90000);
+        }
         public Result refresh(List<Point> previous,Aperture previousAperture){
             refresh(previous);
             if(result.gain<1)applyAperture(previousAperture);
@@ -98,22 +117,78 @@ public final class SpeakerPropagation {
         public Result result(){if(!done)throw new IllegalStateException("Unfinished acoustic search");return result;}
         private double trace(Point a,Point b){
             var key=new Segment(a,b);var saved=traces.get(key);if(saved!=null)return saved;
-            double length=a.distance(b),loss=0;int count=Math.max(1,(int)Math.ceil(length*16));
-            for(int i=0;i<count;i++){
-                if(samples++>=90000)return Double.POSITIVE_INFINITY;
-                double t=(i+.5)/count;
-                loss+=field.loss(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t)*length/count;
+            double length=a.distance(b),loss=0;
+            if(length<1e-10){traces.put(key,0.0);return 0;}
+            // Integrate each crossed 1/16-block cell. Uniform distance samples can
+            // miss a short intersection at a roof corner and invent an open route.
+            double dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;
+            double tx=nextPlane(a.x,dx),ty=nextPlane(a.y,dy),tz=nextPlane(a.z,dz);
+            double sx=dx==0?Double.POSITIVE_INFINITY:1/(16*Math.abs(dx));
+            double sy=dy==0?Double.POSITIVE_INFINITY:1/(16*Math.abs(dy));
+            double sz=dz==0?Double.POSITIVE_INFINITY:1/(16*Math.abs(dz));
+            double t=0,run=0,peak=0;
+            while(t<1){
+                double end=Math.min(1,Math.min(tx,Math.min(ty,tz))),mid=(t+end)*.5;
+                double density=lossAt(a.x+dx*mid,a.y+dy*mid,a.z+dz*mid);
+                if(!Double.isFinite(density))return Double.POSITIVE_INFINITY;
+                if(density>0){run+=density*length*(end-t);peak=Math.max(peak,density);}
+                else if(peak>0){double depth=surfaceLoss(run,peak);loss+=depth;run=0;peak=0;}
+                boolean x=tx<=end+1e-12,y=ty<=end+1e-12,z=tz<=end+1e-12;
+                // Reject zero-width visibility through touching corners. This tiny
+                // geometric marker is not used as a wall's transmission coefficient.
+                if(end<1 && (x?1:0)+(y?1:0)+(z?1:0)>1){
+                    double px=a.x+dx*end,py=a.y+dy*end,pz=a.z+dz*end;
+                    for(int axis=0;axis<3;axis++)for(int sign=-1;sign<=1;sign+=2){
+                        double near=lossAt(px+(axis==0?sign*.00001:0),py+(axis==1?sign*.00001:0),pz+(axis==2?sign*.00001:0));
+                        if(!Double.isFinite(near))return Double.POSITIVE_INFINITY;
+                        if(near>0)loss+=1e-8;
+                    }
+                }
+                if(x)tx+=sx;if(y)ty+=sy;if(z)tz+=sz;
+                t=end;
             }
+            if(peak>0){double depth=surfaceLoss(run,peak);loss+=depth;}
             traces.put(key,loss);return loss;
+        }
+        // Thin edges and panes still have a material interface. A bounded floor
+        // avoids counting every grid cell as another surface and retains the
+        // calibrated stronger isolation of doors and thick walls.
+        private double surfaceLoss(double integrated,double peak){
+            return Math.max(integrated,Math.min(.85,peak)*-Math.expm1(-integrated/.1));
+        }
+        private Result directBeam(double length){
+            double beamDepth=0;
+            directProbeSignature=1;
+            // Fixed spherical footprint: no rotating frame and no stack of probes
+            // sharing the same coordinate at an axis-aligned wall edge.
+            // Integrate the effective barrier across a finite footprint before
+            // solving its impedance. A grazing probe must not become a separate
+            // full-band source through a closed stepped surface.
+            for(int probe=0;probe<7;probe++){
+                double z=probe==0?0:2*((probe-.5)/6.0)-1;
+                double angle=probe*2.399963229728653+.37;
+                double radius=probe==0?0:.2;
+                Point shift=new Point(radius*Math.sqrt(1-z*z)*Math.cos(angle),radius*Math.sqrt(1-z*z)*Math.sin(angle),radius*z);
+                double loss=trace(source.add(shift),listener.add(shift));
+                directProbeSignature=31*directProbeSignature+Double.doubleToLongBits(loss);
+                beamDepth+=loss;
+            }
+            directEffectiveDepth=beamDepth/7;
+            return Result.spectral(length,SpeakerEnergy.transmissionAmplitudes(directEffectiveDepth),source,List.of());
+        }
+        private double nextPlane(double coordinate,double delta){
+            if(delta==0)return Double.POSITIVE_INFINITY;
+            double scaled=coordinate*16;
+            double plane=delta>0?Math.floor(scaled)+1:Math.ceil(scaled)-1;
+            return (plane/16-coordinate)/delta;
         }
         private void initialize(){
             initialized=true;double length=directDistance();
             result=new Result(length,0,20000);direct=result;
-            if(range<=0 || length>=range){pathDone=true;done=true;return;}
+            if(strength<=0 || SpeakerDistance.gain(length,strength)<SpeakerDistance.PATH_FLOOR){pathDone=true;done=true;return;}
             double loss=trace(source,listener);
-            result=new Result(length,loss>=6?0:(float)Math.exp(-loss),loss<.0001?20000:(float)Math.max(250,16000*Math.exp(-loss*.8)),source,List.of());
-            direct=result;
-            if(loss<.0001){route=List.of(source,listener);pathDone=true;return;}
+            result=directBeam(length);direct=result;
+            if(loss==0){route=List.of(source,listener);pathDone=true;return;}
             // Connect the real source to surrounding air, not a single possibly obstructed centre.
             int bx=(int)Math.floor(source.x*2-.5),by=(int)Math.floor(source.y*2-.5),bz=(int)Math.floor(source.z*2-.5);
             for(int x=bx;x<=bx+1;x++)for(int y=by;y<=by+1;y++)for(int z=bz;z<=bz+1;z++){
@@ -137,10 +212,20 @@ public final class SpeakerPropagation {
                     if(d>1e-6)bend+=Math.acos(Math.clamp(before.dot(delta)/(d*segment),-1,1));}
             }
             double extra=Math.max(0,length-directDistance());
-            float gain=(float)Math.exp(-.055*extra-.10*bend);
-            float cutoff=(float)Math.max(1400,20000*Math.exp(-.10*extra-.38*bend));
-            var around=new Result(length,gain,cutoff,simple.get(Math.max(0,simple.size()-2)),List.of());
-            if(score(around,range)>score(result,range)){result=around;route=List.copyOf(simple);}
+            var around=Result.spectral(length,pathSpectrum(extra,bend),simple.get(Math.max(0,simple.size()-2)),List.of());
+            if(score(around,strength)>score(result,strength)){
+                // The finite direct footprint can straddle an edge before its centre
+                // becomes hidden. Introduce the alternative route continuously.
+                double blend=1-direct.gain;
+                double oldWeight=score(direct,strength)*(1-blend),newWeight=score(around,strength)*blend;
+                double total=oldWeight+newWeight;
+                var combined=direct.spectrum.scale(falloff(direct.distance,strength)*(1-blend)/Math.max(1e-9,falloff(length,strength))).add(around.spectrum.scale(blend));
+                var candidate=Result.spectral(length,combined,around.arrival,List.of());
+                if(score(candidate,strength)>score(result,strength)){result=candidate;route=List.copyOf(simple);decision="around";}
+            }
+        }
+        private SpeakerEnergy.Bands pathSpectrum(double extra,double bend){
+            return new SpeakerEnergy.Bands(Math.exp(-.035*extra-.07*bend),Math.exp(-.055*extra-.10*bend),Math.exp(-.10*extra-.38*bend));
         }
         private void node(){
             var next=queue.poll();visited++;
@@ -151,7 +236,7 @@ public final class SpeakerPropagation {
             for(var direction:DIRECTIONS){
                 var cell=new Cell(next.cell.x+direction[0],next.cell.y+direction[1],next.cell.z+direction[2]);var target=cell.point();
                 double cost=next.cost+.5;Point parent=point;
-                if(cost+target.distance(listener)>=range || trace(point,target)>0)continue;
+                if(SpeakerDistance.gain(cost+target.distance(listener),strength)<SpeakerDistance.PATH_FLOOR || trace(point,target)>0)continue;
                 var ancestor=parents.get(next.cell);
                 if(ancestor!=null && trace(ancestor,target)==0){cost=next.cost-ancestor.distance(point)+ancestor.distance(target);parent=ancestor;}
                 if(cost>=best.getOrDefault(cell,Double.POSITIVE_INFINITY))continue;
@@ -161,7 +246,8 @@ public final class SpeakerPropagation {
         }
         private double component(Point p,int axis){return axis==0?p.x:axis==1?p.y:p.z;}
         private Point offset(Point p,int axis,double value){return axis==0?new Point(p.x+value,p.y,p.z):axis==1?new Point(p.x,p.y+value,p.z):new Point(p.x,p.y,p.z+value);}
-        private double lossAt(Point p){samples++;return samples>=90000?Double.POSITIVE_INFINITY:field.loss(p.x,p.y,p.z);}
+        private double lossAt(Point p){return lossAt(p.x,p.y,p.z);}
+        private double lossAt(double x,double y,double z){samples++;return samples>=90000?Double.POSITIVE_INFINITY:field.loss(x,y,z);}
         /** Locate an exit plane from the adjacent solid's far face, using actual sampled geometry. */
         private void prepareAperture(){
             aperturePrepared=true;
@@ -205,8 +291,9 @@ public final class SpeakerPropagation {
             }
         }
         private void applyAperture(Aperture area){
-            if(area.paths.isEmpty() || area.paths.size()>9 || directDistance()>=range)return;
-            double energy=0,cutoffSum=0,x=0,y=0,z=0;int supplied=0;
+            if(area.paths.isEmpty() || area.paths.size()>9 || SpeakerDistance.gain(directDistance(),strength)<SpeakerDistance.PATH_FLOOR)return;
+            double energy=0,x=0,y=0,z=0;int supplied=0;
+            var spectralPower=SpeakerEnergy.Bands.ZERO;
             for(var stored:area.paths){
                 if(stored.size()<2 || stored.size()>32)continue;
                 var path=new ArrayList<>(stored);path.set(0,source);
@@ -222,23 +309,26 @@ public final class SpeakerPropagation {
                         if(d>1e-6)bend+=Math.acos(Math.clamp(last.dot(delta)/(d*segment),-1,1));}
                 }
                 double extra=Math.max(0,length-directDistance());
-                double amplitude=Math.exp(-.055*extra-.10*bend)*falloff(length,range),power=amplitude*amplitude;
-                double cutoff=Math.max(1400,20000*Math.exp(-.10*extra-.38*bend));
-                energy+=power;cutoffSum+=power*cutoff;x+=portal.x*power;y+=portal.y*power;z+=portal.z*power;
+                double amplitude=Math.exp(-.055*extra-.10*bend)*falloff(length,strength),power=amplitude*amplitude;
+                var spectrum=pathSpectrum(extra,bend).scale(falloff(length,strength));
+                spectralPower=spectralPower.add(spectrum.multiply(spectrum));
+                energy+=power;x+=portal.x*power;y+=portal.y*power;z+=portal.z*power;
             }
             if(energy<=0 || supplied==0)return;
             // Normalize: more samples never multiply source power. Hidden patches still consume their share.
-            double amplitude=Math.sqrt(energy/area.paths.size() * -Math.expm1(-area.area/.6)),base=falloff(directDistance(),range);
-            var spread=new Result(directDistance(),(float)Math.clamp(amplitude/Math.max(1e-9,base),0,1),
-                    (float)(cutoffSum/energy),new Point(x/energy,y/energy,z/energy),List.of());
-            if(score(spread,range)>score(direct,range)) {
+            double base=falloff(directDistance(),strength);
+            double norm=-Math.expm1(-area.area/.6)/area.paths.size();
+            var spreadBands=new SpeakerEnergy.Bands(Math.sqrt(spectralPower.low()*norm),Math.sqrt(spectralPower.mid()*norm),Math.sqrt(spectralPower.high()*norm)).scale(1/Math.max(1e-9,base));
+            var spread=Result.spectral(directDistance(),spreadBands,new Point(x/energy,y/energy,z/energy),List.of());
+            if(score(spread,strength)>score(direct,strength)) {
                 // Fade from geometric visibility to aperture radiation across the shadow boundary.
-                double blend=1-direct.gain,old=score(result,range),diffuse=score(spread,range);
+                double blend=1-direct.gain,old=score(result,strength),diffuse=score(spread,strength);
                 double oldWeight=old*(1-blend),newWeight=diffuse*blend,total=oldWeight+newWeight;
                 Point previous=result.arrival==null?source:result.arrival;
                 Point arrival=previous.scale(oldWeight).add(spread.arrival.scale(newWeight)).scale(1/Math.max(1e-9,total));
-                result=new Result(directDistance(),(float)Math.clamp(total/Math.max(1e-9,base),0,1),
-                        (float)((result.cutoff*oldWeight+spread.cutoff*newWeight)/Math.max(1e-9,total)),arrival,List.of());
+                decision="aperture";
+                var combined=result.spectrum.scale(falloff(result.distance,strength)*(1-blend)/Math.max(1e-9,base)).add(spread.spectrum.scale(blend));
+                result=Result.spectral(directDistance(),combined,arrival,List.of());
             }
         }
         /** Small resumable batches, sharing the client's deadline. No worker reads world data. */
@@ -254,7 +344,7 @@ public final class SpeakerPropagation {
                 }
                 if(!aperturePrepared){prepareAperture();continue;}
                 if(!apertureDone){sampleAperture();continue;}
-                result=new Result(result.distance,result.gain,result.cutoff,result.arrival,reflections);done=true;
+                result=new Result(result.distance,result.gain,result.cutoff,result.arrival,reflections,result.spectrum);done=true;
             }
             return done;
         }

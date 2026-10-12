@@ -12,8 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class SpeakerVoice implements AutoCloseable {
     @FunctionalInterface public interface Source { AudioTrack open() throws Exception; }
     public enum Status { NEW, OPENING, PLAYING, PAUSED, FINISHED, STOPPED, FAILED }
-    public record Control(SpeakerPcm.Levels levels, boolean paused, boolean chest, float openness, boolean doubleChest, boolean copper, boolean shell, boolean ender, float environmentGain, float environmentCutoff, java.util.List<SpeakerPropagation.Reflection> reflections,SpeakerWater.Profile water) {
-        public Control { Objects.requireNonNull(levels); Objects.requireNonNull(water); reflections=java.util.List.copyOf(reflections); openness=Float.isFinite(openness)?Math.clamp(openness,0,1):0; }
+    public record Control(SpeakerPcm.Levels levels, boolean paused, boolean chest, float openness, boolean doubleChest, boolean copper, boolean shell, boolean ender, float environmentGain, float environmentCutoff, java.util.List<SpeakerPropagation.Reflection> reflections,SpeakerWater.Profile water,SpeakerEnergy.Bands environmentBands) {
+        public Control { Objects.requireNonNull(levels); Objects.requireNonNull(water); Objects.requireNonNull(environmentBands); reflections=java.util.List.copyOf(reflections); openness=Float.isFinite(openness)?Math.clamp(openness,0,1):0; }
+        public Control(SpeakerPcm.Levels levels,boolean paused,boolean chest,float openness,boolean doubleChest,boolean copper,boolean shell,boolean ender,float environmentGain,float environmentCutoff,java.util.List<SpeakerPropagation.Reflection> reflections,SpeakerWater.Profile water){
+            this(levels,paused,chest,openness,doubleChest,copper,shell,ender,environmentGain,environmentCutoff,reflections,water,SpeakerEnergy.direct(environmentGain,environmentCutoff));
+        }
         public Control(SpeakerPcm.Levels levels, boolean paused) { this(levels,paused,false,0,false,false,false,false,1,20000,java.util.List.of(),SpeakerWater.Profile.DRY); }
         public Control(SpeakerPcm.Levels levels,boolean paused,boolean chest,float openness,boolean doubleChest,boolean copper,boolean shell,boolean ender,float environmentGain,float environmentCutoff,java.util.List<SpeakerPropagation.Reflection> reflections){
             this(levels,paused,chest,openness,doubleChest,copper,shell,ender,environmentGain,environmentCutoff,reflections,SpeakerWater.Profile.DRY);
@@ -64,8 +67,10 @@ public final class SpeakerVoice implements AutoCloseable {
     private void run() {
         AudioTrack track = null;
         SpeakerMixer.Port line = null;
+        SpeakerReadAhead reserve = null;
         try {
             if (stopped) return;
+            long openedAt=System.nanoTime();
             track = source.open();
             track = track.resample(SpeakerMixer.RATE);
             if (stopped) return;
@@ -86,13 +91,21 @@ public final class SpeakerVoice implements AutoCloseable {
             }
             if (stopped) return;
             if(released){status=Status.STOPPED;return;}
-            line = mixer.open();
+            long prepareMillis=(System.nanoTime()-openedAt)/1_000_000;
+            if(prepareMillis>100)soke.musicdelay.MusicDelayReducer.LOGGER.info("[AlwaysPlay audio] decoder-prepare {}: {}ms including seek to {}ms",id,prepareMillis,startMillis);
+            reserve = new SpeakerReadAhead(track,input.length,id.toString());
+            track = null; // Ownership transferred to the dedicated decoder.
+            reserve.prime(()->stopped||released);
+            if(stopped||released)return;
+            if(SpeakerDiagnostics.recording())SpeakerDiagnostics.event("voice-ready",id+" reserveChunks="+reserve.queuedChunks()+" startMillis="+startMillis+" rate="+rate+" channels="+channels);
+            line = mixer.open(id.toString());
             SpeakerPcm.Levels previous = SpeakerPcm.Levels.SILENT;
             SpeakerChestFilter chestFilter = new SpeakerChestFilter(rate,channels);
             SpeakerEnderFilter enderFilter = new SpeakerEnderFilter(rate,channels);
-            SpeakerEnvironmentFilter environmentFilter = new SpeakerEnvironmentFilter(rate,channels);
-            SpeakerWater.Filter waterFilter=new SpeakerWater.Filter(rate,channels);
+            SpeakerSpatialFilter environmentFilter = new SpeakerSpatialFilter(rate,channels);
+            SpeakerWater.Filter waterFilter=new SpeakerWater.Filter(rate,2);
             int tailRemaining=-1;
+            long lastSlowRead=0,lastDiagnostic=0;
             while (!stopped) {
                 if(line.failure()!=null)throw line.failure();
                 Control current = control;
@@ -111,16 +124,24 @@ public final class SpeakerVoice implements AutoCloseable {
                     int frames=Math.min(FRAMES,tailRemaining);count=frames*channels*2;
                     java.util.Arrays.fill(input,0,count,(byte)0);tailRemaining-=frames;
                 } else {
-                    count=track.read(input);
+                    long readAt=System.nanoTime();count=reserve.read(input);
+                    long readMillis=(System.nanoTime()-readAt)/1_000_000;
+                    if(readMillis>50 && readAt-lastSlowRead>5_000_000_000L){soke.musicdelay.MusicDelayReducer.LOGGER.warn("[AlwaysPlay audio] raw-reserve-wait {}: {}ms",id,readMillis);lastSlowRead=readAt;}
+                    if(count==0)continue;
                     if(count<0){tailRemaining=environmentFilter.tailFrames();continue;}
                     chestFilter.process(input,count,current.chest,current.openness,current.doubleChest,current.copper,current.shell);
                     enderFilter.process(input,count,current.ender,current.openness);
                 }
-                environmentFilter.process(input,count,current.environmentGain,current.environmentCutoff,current.reflections);
-                waterFilter.process(input,count,current.water);
+                long dspAt=System.nanoTime();
                 var next = SpeakerPcm.smooth(previous,current.water.spatial(current.levels),count/(channels*2),rate);
-                int bytes = SpeakerPcm.mix(input, count, channels, output, previous, next);
+                int bytes = environmentFilter.process(input,count,output,current.environmentBands,current.reflections,previous,next,current.water.listenerWet());
+                waterFilter.process(output,bytes,current.water);
                 previous = next;
+                long dspNs=System.nanoTime()-dspAt;
+                if(SpeakerDiagnostics.recording() && dspAt-lastDiagnostic>500_000_000L){
+                    SpeakerDiagnostics.event("voice",id+" positionMs="+positionMillis+" reserveMs="+(reserve.queuedBytes()*1000.0/(rate*channels*2))+" dspNs="+dspNs+" gain="+next.gain()+" pan="+next.pan()+" bands="+current.environmentBands+" reflections="+current.reflections.size());
+                    lastDiagnostic=dspAt;
+                }
                 int offset = 0;
                 while (!stopped && offset < bytes) {
                     if (control.paused && !released) {
@@ -137,6 +158,7 @@ public final class SpeakerVoice implements AutoCloseable {
                     positionMillis = startMillis + (long) (line.playedFrames() * 1000.0 / rate);
                 }
             }
+            line.finish();
             // Wait only for this source's queue and device spans, never for other songs.
             while (!stopped && !line.drained()) {
                 if(line.failure()!=null)throw line.failure();
@@ -155,6 +177,7 @@ public final class SpeakerVoice implements AutoCloseable {
             } catch (Exception cleanup) {
                 if (!stopped && !released && failure == null) { failure = cleanup; status = Status.FAILED; }
             } finally {
+                if(reserve!=null)reserve.close();
                 if (track != null) track.close();
                 if (stopped || (released && status!=Status.FINISHED)) status = Status.STOPPED;
             }

@@ -35,6 +35,12 @@ public final class SpeakerWaterWorld {
         var sourceCell=BlockPos.containing(source.x(),source.y(),source.z());
         boolean displacedWater=placed && sourceWet;
         SpeakerWater.Field pathField=(x,y,z)->(displacedWater&&BlockPos.containing(x,y,z).equals(sourceCell))||field.water(x,y,z);
-        return SpeakerWater.profile(sourceWet,listenerWet,SpeakerWater.measure(pathField,route,sourceWet,listenerWet));
+        var path=SpeakerWater.measure(pathField,route,sourceWet,listenerWet);
+        if(!sourceWet && !listenerWet && path.waterLength()>0){
+            // Only the emitter's own cell is exempt; surrounding walls remain solid.
+            var solid=SpeakerAcoustics.field(mc,sourceCell,sourceCell);
+            return SpeakerWaterBypass.measure(pathField,solid,route,path);
+        }
+        return SpeakerWater.profile(sourceWet,listenerWet,path);
     }
 }

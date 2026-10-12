@@ -58,7 +58,6 @@ public final class SpeakerShulker {
         var pos=box.getBlockPos();var packet=new SpeakerPlayback.Snapshot(pos,s.id(),s.trackReference(),s.positionMillis(),
                 level.getGameTime()*50-s.positionMillis(),s.volume(),s.enabled(),false,-1,false,pos,true);
         for(var player:level.players())if(level.getServer().isSingleplayerOwner(player.nameAndId())
-                && player.distanceToSqr(pos.getX()+.5,pos.getY()+.5,pos.getZ()+.5)<4096
                 && ServerPlayNetworking.canSend(player,SpeakerPlayback.Snapshot.TYPE))ServerPlayNetworking.send(player,packet);
     }
     public static boolean finish(ServerPlayer player,SpeakerPlayback.End packet) {

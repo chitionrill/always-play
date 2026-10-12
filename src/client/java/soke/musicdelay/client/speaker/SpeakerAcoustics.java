@@ -13,7 +13,7 @@ public final class SpeakerAcoustics {
     private record Material(List<AABB> shapes,double loss,double reflection,SpeakerEnergy.Voxel voxel) { }
     private SpeakerAcoustics() { }
     public static SpeakerPropagation.Job begin(Minecraft mc,double x,double y,double z,BlockPos source,BlockPos partner,float volume) {
-        return new SpeakerPropagation(field(mc,source,partner)).begin(new SpeakerPropagation.Point(x,y,z),new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ()),24*volume);
+        return new SpeakerPropagation(field(mc,source,partner)).begin(new SpeakerPropagation.Point(x,y,z),new SpeakerPropagation.Point(mc.player.getX(),mc.player.getEyeY(),mc.player.getZ()),volume);
     }
     public static SpeakerEnergy.Transport energy(Minecraft mc,SpeakerPropagation.Point sourcePoint,SpeakerPropagation.Point listener,BlockPos source,BlockPos partner){
         return new SpeakerEnergy.Transport(field(mc,source,partner),sourcePoint,listener);
@@ -22,7 +22,7 @@ public final class SpeakerAcoustics {
         var boxes=shapes.stream().map(b->new SpeakerEnergy.Box(b.minX,b.minY,b.minZ,b.maxX,b.maxY,b.maxZ)).toList();
         return new Material(shapes,loss,reflection,new SpeakerEnergy.Voxel(boxes,new SpeakerEnergy.Material(loss,reflection)));
     }
-    private static SpeakerPropagation.Field field(Minecraft mc,BlockPos source,BlockPos partner){
+    static SpeakerPropagation.Field field(Minecraft mc,BlockPos source,BlockPos partner){
         var cache=new HashMap<BlockPos,Material>();
         return new SpeakerPropagation.Field() {
             private Material material(BlockPos pos) {
